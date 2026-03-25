@@ -1,0 +1,44 @@
+= Feature: {{ doc.feature }}
+:prefix: {{ doc.prefix }}
+:version: {{ doc.version }}
+:last-updated: {{ doc.last_updated }}
+:toc:
+
+{% if doc.constraint_notes %}
+== Constraint Notes
+
+{% for note in doc.constraint_notes %}
+* *{{ note.category }}:* {{ note.constraint }}
+{% if note.note %}
++
+NOTE: {{ note.note }}
+{% endif %}
+{% endfor %}
+{% endif %}
+
+{% for story in doc.stories %}
+== {{ story.id }}: {{ story.title }}
+
+[quote]
+____
+*As a* {{ story.narrative.as_a }}, +
+*I want* {{ story.narrative.i_want }}, +
+*so that* {{ story.narrative.so_that }}.
+____
+
+=== Requirements
+
+[cols="1,1,3,3", options="header"]
+|===
+| ID | Type | Requirement | Verification
+
+{% for req in story.requirements %}
+| {{ req.id }}
+| {{ req.ears_type }}
+| {{ req.text }}
+| {{ req.verification }}
+
+{% endfor %}
+|===
+
+{% endfor %}

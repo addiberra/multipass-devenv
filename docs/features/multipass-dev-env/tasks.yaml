@@ -1,0 +1,83 @@
+# yaml-language-server: $schema=../schemas/tasks.schema.json
+# Implementation tasks: multipass-dev-env
+
+schema_version: "3.0.0"
+feature: multipass-dev-env
+version: "1.0.0"
+status: Current
+source_design_version: "1.0.0"
+source_spec_version: "1.0.0"
+last_updated: "2026-03-25"
+
+overview: >-
+  Implementation plan for the multipass development environment. 5 tasks.
+  Config file -> Cloud-init -> Scripts -> Documentation.
+
+tasks:
+  - id: TASK-001
+    title: Create config.yaml.example template
+    depends_on: []
+    components: [config.yaml.example]
+    stories: [US-001]
+    requirements: [MDEV-001, MDEV-004]
+    description: >-
+      Create config.yaml.example with documentation comments showing:
+      - VM specs (name, cores, memory, disk, image)
+      - Repository list (url + path for each)
+      - opencode settings (provider, api_key_env reference)
+
+  - id: TASK-002
+    title: Create cloud-init.yaml provisioning configuration
+    depends_on: [TASK-001]
+    components: [cloud-init.yaml]
+    stories: [US-001, US-002, US-003, US-006]
+    requirements: [MDEV-002, MDEV-004, MDEV-005, MDEV-006, MDEV-007, MDEV-008, MDEV-009, MDEV-015, MDEV-016]
+    description: >-
+      Create cloud-init.yaml with:
+      - packages: opencode, git, build-essential, ufw
+      - UFW configuration: enable, default deny incoming, allow 80,443 outgoing
+      - create /workspace directory
+      - clone repos from config into /workspace (using write_files for each repo)
+      - opencode.json at /home/dev/.config/opencode/opencode.json
+        with {env:OPENAI_API_KEY} reference and permission prompts
+      Note: cloud-init cannot read external config.yaml, so repos must be
+      hardcoded or a separate template step needed
+
+  - id: TASK-003
+    title: Create launch.sh script
+    depends_on: [TASK-002]
+    components: [scripts/launch.sh]
+    stories: [US-001]
+    requirements: [MDEV-001, MDEV-003]
+    description: >-
+      Create scripts/launch.sh that:
+      - Reads config.yaml to get VM name, specs, and repo list
+      - Runs multipass launch with --name, --cpus, --memory, --disk, --cloud-init
+      - Waits for VM to be running
+      - Verifies OPENAI_API_KEY is available in VM via exec --env
+      - Creates initial snapshot named clean-YYYY-MM-DD
+
+  - id: TASK-004
+    title: Create supporting shell scripts
+    depends_on: [TASK-003]
+    components: [scripts/shell.sh, scripts/clone-repo.sh, scripts/snapshot.sh, scripts/destroy.sh]
+    stories: [US-004, US-005, US-006]
+    requirements: [MDEV-010, MDEV-011, MDEV-012, MDEV-013, MDEV-014]
+    description: >-
+      Create scripts/ with:
+      - shell.sh: check if VM running, multipass shell or error message
+      - clone-repo.sh: multipass exec git clone with URL and PATH args
+      - snapshot.sh: multipass snapshot with clean-YYYY-MM-DD name
+      - destroy.sh: multipass stop, delete, purge
+
+  - id: TASK-005
+    title: Update cloud-init for dynamic repo cloning
+    depends_on: [TASK-002, TASK-003]
+    components: [cloud-init.yaml, scripts/launch.sh]
+    stories: [US-001]
+    requirements: [MDEV-004]
+    description: >-
+      Refine cloud-init.yaml to not hardcode repos (remove write_files for clones).
+      Enhance launch.sh to clone repos via multipass exec after VM is running.
+      This allows repos to be specified in config.yaml and cloned at launch time
+      rather than baked into the image.

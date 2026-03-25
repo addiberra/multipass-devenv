@@ -1,0 +1,61 @@
+# yaml-language-server: $schema=../schemas/feature-spec.schema.json
+# Feature specification: checkout
+
+schema_version: "1.0.0"
+feature: checkout
+prefix: CHK
+version: "1.0.0"
+last_updated: "2026-02-20"
+
+stories:
+  - id: US-001
+    title: Checkout Process
+    narrative:
+      as_a: shopper
+      i_want: to complete my purchase
+      so_that: I can receive my ordered items
+    requirements:
+      - id: CHK-001
+        text: >-
+          The system shall provide a form for entering a shipping address
+          during checkout.
+        ears_type: ubiquitous
+        verification: >-
+          Proceed to checkout. Confirm that a shipping address form is
+          displayed with fields for address entry.
+
+      - id: CHK-002
+        text: >-
+          When the user enters a valid shipping address, the system shall
+          allow the user to select a payment method.
+        ears_type: event-driven
+        verification: >-
+          Enter a valid shipping address during checkout. Confirm that
+          payment method options are presented.
+
+      - id: CHK-003
+        text: >-
+          When the user selects a payment method, the system shall display
+          an order summary showing items, quantities, prices, and total.
+        ears_type: event-driven
+        verification: >-
+          Complete shipping and payment steps. Confirm the order summary
+          shows all items with correct quantities, prices, and total.
+
+      - id: CHK-004
+        text: >-
+          When the user confirms the order, the system shall display an
+          order confirmation page and send an order confirmation email.
+        ears_type: event-driven
+        verification: >-
+          Confirm the order. Verify that a confirmation page is displayed
+          and a confirmation email is received.
+
+      - id: CHK-005
+        text: >-
+          If payment processing fails, then the system shall display a
+          payment error message and allow the user to retry the payment.
+        ears_type: unwanted-behavior
+        verification: >-
+          Trigger a payment failure (e.g., use a test card that declines).
+          Confirm an error message is shown and a retry option is available.

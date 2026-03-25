@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenimpact.github.io/proven-needs/schemas/feature-spec.schema.json",
+  "title": "Feature Specification",
+  "description": "A feature specification combining user stories and EARS requirements with full traceability. Each user story has requirements that resolve it. Requirement IDs and story IDs must be unique within the feature. The top-level 'version' field is a repository-specific schema metadata extension consumed by the validation scripts.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["schema_version", "feature", "prefix", "version", "last_updated", "stories"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of the feature-spec schema this file was written against."
+    },
+    "feature": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$",
+      "description": "Feature slug in kebab-case (e.g., 'product-browsing', 'shopping-cart')."
+    },
+    "prefix": {
+      "type": "string",
+      "pattern": "^[A-Z]{2,5}$",
+      "description": "2-5 character uppercase prefix for requirement IDs (e.g., 'PROD', 'CART')."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "SemVer version of this specification file."
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of last update in YYYY-MM-DD format."
+    },
+    "constraint_notes": {
+      "type": "array",
+      "description": "References to project-wide constraints that apply to this feature but are NOT duplicated as requirements here.",
+      "items": {
+        "type": "object",
+        "required": ["constraint", "category"],
+        "additionalProperties": false,
+        "properties": {
+          "constraint": {
+            "type": "string",
+            "description": "The constraint text from docs/constraints.yaml."
+          },
+          "category": {
+            "type": "string",
+            "description": "The constraint category (e.g., 'Security', 'Architecture')."
+          },
+          "note": {
+            "type": "string",
+            "description": "Optional explanation of how the constraint applies to this feature."
+          }
+        }
+      }
+    },
+    "stories": {
+      "type": "array",
+      "minItems": 1,
+      "description": "User stories for this feature. Each story has an ID, narrative, and requirements that resolve it.",
+      "items": {
+        "$ref": "#/$defs/story"
+      }
+    }
+  },
+  "$defs": {
+    "story": {
+      "type": "object",
+      "required": ["id", "title", "narrative", "requirements"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^US-\\d{3}$",
+          "description": "Unique story ID within this feature (e.g., 'US-001')."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Concise story title (e.g., 'View Product Catalog')."
+        },
+        "narrative": {
+          "$ref": "#/$defs/narrative",
+          "description": "The user story narrative: role, goal, benefit."
+        },
+        "requirements": {
+          "type": "array",
+          "minItems": 1,
+          "description": "EARS requirements that resolve this user story. Each requirement is a black-box testable specification.",
+          "items": {
+            "$ref": "#/$defs/requirement"
+          }
+        }
+      }
+    },
+    "narrative": {
+      "type": "object",
+      "required": ["as_a", "i_want", "so_that"],
+      "additionalProperties": false,
+      "properties": {
+        "as_a": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The user role (e.g., 'shopper', 'admin')."
+        },
+        "i_want": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The goal or action (e.g., 'to browse available products')."
+        },
+        "so_that": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The benefit or value (e.g., 'I can find items I want to purchase')."
+        }
+      }
+    },
+    "requirement": {
+      "type": "object",
+      "required": ["id", "text", "ears_type", "verification"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Z]{2,5}-\\d{3}$",
+          "description": "Unique requirement ID using the feature prefix (e.g., 'PROD-001'). Sequential within the feature, not within a single story."
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The EARS requirement text. Must follow the EARS sentence pattern for the specified type."
+        },
+        "ears_type": {
+          "type": "string",
+          "enum": ["ubiquitous", "event-driven", "state-driven", "unwanted-behavior", "optional-feature", "complex"],
+          "description": "The EARS sentence type used for this requirement."
+        },
+        "verification": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Black-box verification description: how a tester can verify this requirement using only the system's UI or public APIs."
+        }
+      }
+    }
+  }
+}

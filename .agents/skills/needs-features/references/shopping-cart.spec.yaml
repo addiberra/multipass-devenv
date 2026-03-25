@@ -1,0 +1,88 @@
+# yaml-language-server: $schema=../schemas/feature-spec.schema.json
+# Feature specification: shopping-cart
+
+schema_version: "1.0.0"
+feature: shopping-cart
+prefix: CART
+version: "1.0.0"
+last_updated: "2026-02-20"
+
+stories:
+  - id: US-001
+    title: Add to Cart
+    narrative:
+      as_a: shopper
+      i_want: to add products to my cart
+      so_that: I can purchase multiple items at once
+    requirements:
+      - id: CART-001
+        text: >-
+          When the user clicks the add-to-cart button on a product, the
+          system shall add the product to the cart and update the cart count
+          in the header.
+        ears_type: event-driven
+        verification: >-
+          Click the add-to-cart button on a product. Confirm the cart count
+          in the header increases by one.
+
+      - id: CART-002
+        text: >-
+          When the user adds a product to the cart, the system shall display
+          a success confirmation message.
+        ears_type: event-driven
+        verification: >-
+          Add a product to the cart. Confirm a confirmation message (e.g.,
+          "Widget added to cart") is displayed.
+
+      - id: CART-003
+        text: >-
+          When the user adds a product that is already in the cart, the
+          system shall increment the quantity for that product instead of
+          adding a duplicate entry.
+        ears_type: event-driven
+        verification: >-
+          Add a product that is already in the cart. Confirm the quantity
+          increments rather than a new line item appearing.
+
+  - id: US-002
+    title: View Cart
+    narrative:
+      as_a: shopper
+      i_want: to view my cart contents
+      so_that: I can review items before checkout
+    requirements:
+      - id: CART-004
+        text: >-
+          The system shall display all cart items with their names,
+          quantities, and prices.
+        ears_type: ubiquitous
+        verification: >-
+          Navigate to the cart page with items in the cart. Confirm each
+          item shows its name, quantity, and price.
+
+      - id: CART-005
+        text: >-
+          The system shall display the correct cart total based on item
+          prices and quantities.
+        ears_type: ubiquitous
+        verification: >-
+          Add items with known prices. Navigate to the cart. Confirm the
+          displayed total matches the expected sum.
+
+      - id: CART-006
+        text: >-
+          When the user changes an item quantity, the system shall update
+          the item subtotal and cart total.
+        ears_type: event-driven
+        verification: >-
+          Change the quantity of an item in the cart. Confirm the subtotal
+          and cart total update correctly.
+
+      - id: CART-007
+        text: >-
+          When the user removes an item from the cart, the system shall
+          remove it from the display and update the cart total.
+        ears_type: event-driven
+        verification: >-
+          Remove an item from the cart. Confirm it disappears from the
+          list and the total is recalculated.

@@ -1,0 +1,196 @@
+= Implementation Example
+
+This file walks through implementing the ready tasks for the shopping-cart feature task graph. It demonstrates the DAG cycle: identify ready tasks, implement them, verify, commit, then continue with the next ready set.
+
+== Context
+
+Given:
+
+* `docs/features/shopping-cart/tasks.yaml` at version `1.0.0` with 9 tasks in a DAG
+* `docs/features/shopping-cart/design.adoc` at version `1.0.0` with system design for cart management
+* `docs/features/shopping-cart/data-model.adoc` at version `1.0.0` with entities: Cart, CartItem
+* `docs/features/shopping-cart/spec.yaml` at version `1.0.0` with stories US-001, US-002 and requirements CART-001 through CART-007
+* No tasks are done yet -- starting from the root task set
+* TDD not adopted (no tests ADR)
+
+== Step 1: Read Inputs
+
+Read `docs/features/shopping-cart/tasks.yaml` -- status is `Current`, source-design-version is `1.0.0`. Proceed.
+
+Read `docs/features/shopping-cart/design.adoc` -- extract system design (frontend components, CartService, API routes), requirement resolution mappings, and architecture constraint (business logic in service layer).
+
+Read `docs/features/shopping-cart/data-model.adoc` -- extract Cart and CartItem entity definitions.
+
+Read `docs/features/shopping-cart/spec.yaml` -- extract requirement texts and verifications for acceptance criteria context.
+
+== Step 2: Check for Existing Progress
+
+No tasks are done.
+
+Dependency analysis shows:
+
+* Root tasks: `TASK-001`
+* Ready tasks: `TASK-001`
+
+== Step 3: Build Ready-Task List
+
+Parse all tasks whose dependencies are already satisfied. The first ready set contains 1 task:
+
+....
+TodoWrite:
+- TASK-001: Create Cart and CartItem entities and migrations [pending]
+....
+
+This ready set targets requirements: CART-001, CART-004.
+
+== Step 4: Implement Ready Tasks
+
+=== TASK-001: Create Cart and CartItem entities and migrations
+
+Mark TASK-001 as `in_progress` in the todo list.
+
+Read `data-model.adoc` for Cart and CartItem entity definitions. Read spec.yaml requirements CART-001 and CART-004 to understand the expected behavior. Implement:
+
+* Create `lib/db/migrations/004_create_carts.sql`:
++
+....
+CREATE TABLE carts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id VARCHAR(255) NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX idx_carts_session_id ON carts(session_id);
+
+CREATE TABLE cart_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  cart_id UUID NOT NULL REFERENCES carts(id) ON DELETE CASCADE,
+  product_id UUID NOT NULL REFERENCES products(id),
+  quantity INTEGER NOT NULL CHECK (quantity >= 1),
+  UNIQUE(cart_id, product_id)
+);
+
+CREATE INDEX idx_cart_items_cart_id ON cart_items(cart_id);
+....
+
+* Create `lib/models/cart.ts` with TypeScript types and basic query functions
+* Create `lib/models/cart-item.ts` with TypeScript types
+
+Mark TASK-001 as `completed` in the todo list. Set `done: true` on TASK-001 in `docs/features/shopping-cart/tasks.yaml`.
+
+== Step 5: Verify Task Batch
+
+Detect verification commands from `package.json`:
+
+....
+npm run build     # Next.js build -- passes
+npm run lint      # ESLint -- passes
+npm run typecheck # tsc --noEmit -- passes
+npm test          # Existing tests -- passes (no regressions)
+....
+
+Build, lint, typecheck, and regression tests all pass. Proceed to commit.
+
+== Step 6: Commit Task Batch
+
+Stage and commit:
+
+....
+git add .
+git commit -m "feat(shopping-cart): implement task batch
+
+- TASK-001: Create Cart and CartItem entities and migrations"
+....
+
+Commit succeeds.
+
+== Step 7: Advance the DAG
+
+Recompute the ready set after TASK-001 completes:
+
+....
+Ready tasks:
+- TASK-002: Implement CartService with business logic
+- TASK-003: Implement POST /api/cart/items endpoint
+- TASK-004: Implement PATCH /api/cart/items/:id endpoint
+- TASK-005: Implement DELETE /api/cart/items/:id endpoint
+....
+
+Create a new tracking list for the next batch:
+
+....
+TodoWrite:
+- TASK-002: Implement CartService with business logic [pending]
+- TASK-003: Implement POST /api/cart/items endpoint [pending]
+- TASK-004: Implement PATCH /api/cart/items/:id endpoint [pending]
+- TASK-005: Implement DELETE /api/cart/items/:id endpoint [pending]
+....
+
+Loop back to Step 4 for the next ready set.
+
+== Updated tasks.yaml After the First Batch
+
+....
+tasks:
+  - id: TASK-001
+    title: Create Cart and CartItem entities and migrations
+    done: true
+    depends_on: []
+    components: [Database, Cart model, CartItem model]
+    stories: [US-001, US-002]
+    requirements: [CART-001, CART-004]
+    description: Create Cart table and CartItem table...
+
+  - id: TASK-002
+    title: Implement CartService with business logic
+    depends_on: [TASK-001]
+    components: [CartService]
+    stories: [US-001, US-002]
+    requirements: [CART-003, CART-006, CART-007]
+    description: Create CartService class in the service layer...
+
+  - id: TASK-003
+    title: Implement POST /api/cart/items endpoint
+    depends_on: [TASK-001]
+    # ...still not done...
+....
+
+== Final State (After All Tasks Complete)
+
+When the last ready set is committed:
+
+1. Verify implementation against spec.yaml: check that all requirements (CART-001 through CART-007) have been addressed by reviewing the code against each requirement's verification description.
+
+2. Set the task list status to `Implemented`:
++
+....
+docs/features/shopping-cart/tasks.yaml -> status: Implemented
+....
+
+3. Detect design divergences -- compare what was built against the design. For each divergence, analyze both resolution directions (update design vs. fix code) and report to the orchestrator:
++
+....
+Design divergences for shopping-cart:
+
+  1. CartService validation placement
+     Design: Validation logic in CartService.addItem()
+     Implementation: Zod schema validation in POST /api/cart route handler
+     Reason: Zod schema validation at the API boundary is more idiomatic
+     Update design: Reflect route-level validation pattern
+     Fix code: Move validation into CartService
+
+No other divergences detected.
+....
++
+The orchestrator presents this to the user for decision. This skill does NOT modify `design.adoc` -- design updates are routed to `needs-design` by the orchestrator.
+
+4. Commit task status update:
++
+....
+git commit -m "chore(shopping-cart): mark implementation complete
+
+Set tasks status to Implemented."
+....
+
+Report to the orchestrator that the shopping-cart feature implementation is complete, along with the divergence report.

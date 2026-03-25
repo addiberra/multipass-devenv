@@ -1,0 +1,9 @@
+# Architecture Decision Records
+
+**Version:** {{ doc.version }} | **Updated:** {{ doc.last_updated }}
+
+| ADR | Decision | Status | Date |
+|-----|----------|--------|------|
+{% for d in doc.decisions %}
+| {{ d.id }} | {{ d.title }} | {{ d.status }} | {{ d.date }} |
+{% endfor %}

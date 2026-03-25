@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenimpact.github.io/proven-needs/schemas/adr.schema.json",
+  "title": "Architecture Decision Record",
+  "description": "A single architecture decision record (ADR). Records a technology or architecture decision with context, consequences, and alternatives considered. The top-level 'version' field is a repository-specific schema metadata extension consumed by the validation scripts.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["schema_version", "id", "title", "status", "date", "deciders", "context", "decision", "consequences"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of the ADR schema this file was written against."
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^ADR-\\d{4}$",
+      "description": "ADR identifier (e.g., 'ADR-0001'). Zero-padded 4-digit sequence number."
+    },
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Short decision title (e.g., 'Use TypeScript for Backend and Frontend')."
+    },
+    "status": {
+      "type": "string",
+      "enum": ["Proposed", "Accepted", "Deprecated", "Superseded"],
+      "description": "Current status of the decision."
+    },
+    "superseded_by": {
+      "type": "string",
+      "pattern": "^ADR-\\d{4}$",
+      "description": "If status is 'Superseded', the ADR that replaces this one."
+    },
+    "date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date the decision was made or last updated."
+    },
+    "deciders": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Who was involved in making the decision."
+    },
+    "context": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What is the issue motivating this decision? Background and problem statement."
+    },
+    "decision": {
+      "type": "string",
+      "minLength": 1,
+      "description": "What is the change being made? The chosen approach."
+    },
+    "consequences": {
+      "type": "object",
+      "required": ["easier", "harder"],
+      "additionalProperties": false,
+      "properties": {
+        "easier": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "What becomes easier because of this decision."
+        },
+        "harder": {
+          "type": "array",
+          "items": { "type": "string" },
+          "minItems": 1,
+          "description": "What becomes harder because of this decision."
+        }
+      }
+    },
+    "alternatives": {
+      "type": "array",
+      "description": "Alternatives that were considered and rejected.",
+      "items": {
+        "$ref": "#/$defs/alternative"
+      }
+    },
+    "references": {
+      "type": "array",
+      "description": "Optional references to related ADRs, constraints, or external resources.",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "alternative": {
+      "type": "object",
+      "required": ["name", "reason_rejected"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Name of the alternative (e.g., 'Go backend + TypeScript frontend')."
+        },
+        "description": {
+          "type": "string",
+          "description": "Optional description of the alternative approach."
+        },
+        "reason_rejected": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Why this alternative was not chosen."
+        }
+      }
+    }
+  }
+}

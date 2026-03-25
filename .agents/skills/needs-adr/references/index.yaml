@@ -1,0 +1,18 @@
+# yaml-language-server: $schema=../schemas/adr-index.schema.json
+
+schema_version: "1.0.0"
+version: "1.0.0"
+last_updated: "2026-02-19"
+
+decisions:
+  - id: ADR-0001
+    title: Use TypeScript for Backend and Frontend
+    status: Accepted
+    date: "2026-02-18"
+    file: 0001-use-typescript.yaml
+
+  - id: ADR-0002
+    title: Use PostgreSQL for Persistence
+    status: Accepted
+    date: "2026-02-19"
+    file: 0002-use-postgresql.yaml

@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenimpact.github.io/proven-needs/schemas/adr-index.schema.json",
+  "title": "ADR Index",
+  "description": "Index of all architecture decision records in the project. Provides a summary view of all decisions. The top-level 'version' field is a repository-specific schema metadata extension consumed by the validation scripts.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["schema_version", "version", "last_updated", "decisions"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of the ADR index schema this file was written against."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "SemVer version of this index file."
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of last update in YYYY-MM-DD format."
+    },
+    "decisions": {
+      "type": "array",
+      "description": "Summary of all ADRs. Must match the individual ADR files.",
+      "items": {
+        "$ref": "#/$defs/decision_summary"
+      }
+    }
+  },
+  "$defs": {
+    "decision_summary": {
+      "type": "object",
+      "required": ["id", "title", "status", "date", "file"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^ADR-\\d{4}$",
+          "description": "ADR identifier matching the individual file."
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Short decision title."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["Proposed", "Accepted", "Deprecated", "Superseded"],
+          "description": "Current status."
+        },
+        "date": {
+          "type": "string",
+          "format": "date",
+          "description": "Date of the decision."
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^\\d{4}-.+\\.yaml$",
+          "description": "Filename of the individual ADR file (e.g., '0001-use-typescript.yaml')."
+        }
+      }
+    }
+  }
+}

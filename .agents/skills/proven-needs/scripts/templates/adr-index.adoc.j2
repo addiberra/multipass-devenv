@@ -1,0 +1,17 @@
+= Architecture Decision Records
+:version: {{ doc.version }}
+:last-updated: {{ doc.last_updated }}
+:toc:
+
+[cols="1,3,1,1", options="header"]
+|===
+| ADR | Decision | Status | Date
+
+{% for d in doc.decisions %}
+| {{ d.id }}
+| {{ d.title }}
+| {{ d.status }}
+| {{ d.date }}
+
+{% endfor %}
+|===

@@ -1,0 +1,143 @@
+= Example: Spec Requirements to Tests
+
+== Context
+
+The project has an accepted ADR (`docs/adrs/0004-adopt-tdd.yaml`) recording the decision to use TDD. The test framework is Vitest (detected from `vitest.config.ts`).
+
+This example shows test derivation for the `product-browsing` feature from `docs/features/product-browsing/spec.yaml`.
+
+== Input: spec.yaml (excerpt)
+
+[source,yaml]
+----
+feature: product-browsing
+prefix: PROD
+
+stories:
+  - id: US-001
+    title: View Product Catalog
+    narrative:
+      as_a: shopper
+      i_want: to browse available products
+      so_that: I can find items I want to purchase
+    requirements:
+      - id: PROD-001
+        text: The system shall display products in a grid or list format.
+        ears_type: ubiquitous
+        verification: >-
+          Navigate to the product listing page. Confirm that products are
+          displayed in a grid or list layout.
+
+      - id: PROD-002
+        text: >-
+          The system shall show the name, price, and image for each product
+          in the listing.
+        ears_type: ubiquitous
+        verification: >-
+          View the product listing. Confirm each product displays its name,
+          price, and image.
+
+      - id: PROD-003
+        text: >-
+          When the user selects a category filter, the system shall display
+          only products in that category.
+        ears_type: event-driven
+        verification: >-
+          Select a category filter. Confirm that only products in the
+          selected category are displayed.
+----
+
+== Output: tests/features/product-browsing/catalog.test.ts
+
+[source,typescript]
+----
+import { describe, it, expect, beforeEach } from "vitest";
+import { render, screen, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { ProductCatalog } from "@/components/ProductCatalog";
+import { createTestProducts } from "@/tests/factories/product";
+
+describe("US-001: View Product Catalog", () => {
+  const products = createTestProducts([
+    { name: "Widget A", price: 9.99, category: "electronics", image: "widget-a.jpg" },
+    { name: "Widget B", price: 19.99, category: "electronics", image: "widget-b.jpg" },
+    { name: "Shirt", price: 29.99, category: "clothing", image: "shirt.jpg" },
+  ]);
+
+  beforeEach(() => {
+    render(<ProductCatalog products={products} />);
+  });
+
+  it("PROD-001: displays products in a grid or list format", () => {
+    const productList = screen.getByRole("list", { name: /products/i });
+    const items = within(productList).getAllByRole("listitem");
+    expect(items).toHaveLength(3);
+  });
+
+  it("PROD-002: shows name, price, and image for each product", () => {
+    for (const product of products) {
+      expect(screen.getByText(product.name)).toBeInTheDocument();
+      expect(screen.getByText(`$${product.price}`)).toBeInTheDocument();
+      expect(screen.getByAltText(product.name)).toHaveAttribute("src", product.image);
+    }
+  });
+
+  it("PROD-003: filters products by selected category", async () => {
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("option", { name: "electronics" }));
+
+    expect(screen.getByText("Widget A")).toBeInTheDocument();
+    expect(screen.getByText("Widget B")).toBeInTheDocument();
+    expect(screen.queryByText("Shirt")).not.toBeInTheDocument();
+  });
+});
+----
+
+== Notes
+
+- Test descriptions include the requirement ID (e.g., `PROD-001:`) for traceability
+- Tests are grouped by story ID in describe blocks
+- In TDD mode, these tests are written BEFORE the production code. They will fail initially and drive the implementation.
+- The test implementations use the design document to understand what components exist (ProductCatalog, test factories, etc.)
+- Each test verifies exactly what the `verification` field in the spec describes
+- Tests follow the project's existing conventions (Vitest, Testing Library, factories)
+
+== ADR That Enables This Capability
+
+For reference, the ADR that enables `needs-tests`:
+
+....
+[source,yaml]
+----
+schema_version: "1.0.0"
+id: ADR-0004
+title: Adopt Test-Driven Development
+status: Accepted
+date: "2026-02-20"
+deciders: Team
+
+context: >-
+  The project needs a testing strategy. Options considered: no automated tests,
+  test-after, and test-first / TDD derived from specs before implementation.
+
+decision: >-
+  Adopt TDD. Tests are derived from feature specifications (spec.yaml) before
+  implementation. The needs-tests capability generates test files from EARS
+  requirements.
+
+consequences:
+  easier:
+    - Tests serve as the acceptance gate for implementation
+    - Test coverage constraints in docs/constraints.yaml can be enforced consistently
+  harder:
+    - Each feature transition includes an additional test-derivation step
+
+alternatives:
+  - name: No automated tests
+    reason_rejected: >-
+      Manual verification alone provides weaker regression protection.
+  - name: Test-after
+    reason_rejected: >-
+      Writing tests after implementation weakens the spec-driven workflow.
+----
+....

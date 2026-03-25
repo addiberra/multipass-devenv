@@ -1,0 +1,46 @@
+= {{ doc.id }}: {{ doc.title }}
+:status: {{ doc.status }}{% if doc.superseded_by is defined and doc.superseded_by %} (superseded by {{ doc.superseded_by }}){% endif %}
+
+:date: {{ doc.date }}
+:deciders: {{ doc.deciders }}
+
+== Context
+
+{{ doc.context }}
+
+== Decision
+
+{{ doc.decision }}
+
+== Consequences
+
+.Easier
+{% for item in doc.consequences.easier %}
+* {{ item }}
+{% endfor %}
+
+.Harder
+{% for item in doc.consequences.harder %}
+* {{ item }}
+{% endfor %}
+
+{% if doc.alternatives is defined and doc.alternatives %}
+== Alternatives Considered
+
+{% for alt in doc.alternatives %}
+=== {{ alt.name }}
+
+{% if alt.description is defined and alt.description %}{{ alt.description }}
+
+{% endif %}
+*Rejected because:* {{ alt.reason_rejected }}
+
+{% endfor %}
+{% endif %}
+{% if doc.references is defined and doc.references %}
+== References
+
+{% for ref in doc.references %}
+* {{ ref }}
+{% endfor %}
+{% endif %}

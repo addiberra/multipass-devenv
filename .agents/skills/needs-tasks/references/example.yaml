@@ -1,0 +1,113 @@
+# yaml-language-server: $schema=../schemas/tasks.schema.json
+# Implementation tasks: shopping-cart
+
+schema_version: "3.0.0"
+feature: shopping-cart
+version: "1.0.0"
+status: Current
+source_design_version: "1.0.0"
+source_spec_version: "1.0.0"
+last_updated: "2026-02-21"
+
+overview: >-
+  Implementation plan for the shopping cart feature. 9 tasks with explicit
+  dependencies. Foundation (entities) -> Backend services -> Frontend components.
+
+tasks:
+  - id: TASK-001
+    title: Create Cart and CartItem entities and migrations
+    depends_on: []
+    components: [Database, Cart model, CartItem model]
+    stories: [US-001, US-002]
+    requirements: [CART-001, CART-004]
+    description: >-
+      Create Cart table (id, session_id indexed, created_at, updated_at)
+      and CartItem table (id, cart_id FK, product_id FK, quantity >= 1).
+      Set up cascade delete from Cart to CartItem. FK to existing
+      Product table.
+
+  - id: TASK-002
+    title: Implement CartService with business logic
+    depends_on: [TASK-001]
+    components: [CartService]
+    stories: [US-001, US-002]
+    requirements: [CART-003, CART-006, CART-007]
+    description: >-
+      Create CartService class in the service layer. Methods: addToCart
+      (validates stock, handles duplicates by incrementing quantity),
+      updateQuantity (validates stock), removeItem, getCart. All business
+      logic in the service, not route handlers (architecture constraint).
+
+  - id: TASK-003
+    title: Implement POST /api/cart/items endpoint
+    depends_on: [TASK-001]
+    components: [POST /api/cart/items, CartService]
+    stories: [US-001]
+    requirements: [CART-001, CART-002, CART-003]
+    description: >-
+      Route handler that creates cart with session_id if none exists,
+      delegates to CartService.addToCart. Returns updated cart JSON
+      with confirmation message.
+
+  - id: TASK-004
+    title: Implement PATCH /api/cart/items/:id endpoint
+    depends_on: [TASK-001]
+    components: [PATCH /api/cart/items, CartService]
+    stories: [US-002]
+    requirements: [CART-006]
+    description: >-
+      Route handler that delegates to CartService.updateQuantity.
+      Validates item exists. Returns updated cart item.
+
+  - id: TASK-005
+    title: Implement DELETE /api/cart/items/:id endpoint
+    depends_on: [TASK-001]
+    components: [DELETE /api/cart/items, CartService]
+    stories: [US-002]
+    requirements: [CART-007]
+    description: >-
+      Route handler that delegates to CartService.removeItem.
+      Returns 204 on success, 404 if not found.
+
+  - id: TASK-006
+    title: Implement CartContext state management
+    depends_on: [TASK-002]
+    components: [CartContext]
+    stories: [US-001, US-002]
+    requirements: [CART-001, CART-004]
+    description: >-
+      Create React Context for cart state. Store cart items, provide
+      add/update/remove actions that call backend APIs. Sync state with
+      localStorage for anonymous users. Expose item count for CartIcon.
+
+  - id: TASK-007
+    title: Add add-to-cart button to ProductCard
+    depends_on: [TASK-006]
+    components: [ProductCard (existing), CartContext]
+    stories: [US-001]
+    requirements: [CART-001, CART-002]
+    description: >-
+      Add "Add to Cart" button to existing ProductCard component.
+      On click, call CartContext.addToCart. Display success toast
+      after add.
+
+  - id: TASK-008
+    title: Build CartIcon header component
+    depends_on: [TASK-006]
+    components: [CartIcon, CartContext]
+    stories: [US-001]
+    requirements: [CART-001]
+    description: >-
+      Header icon showing current item count from CartContext.
+      Link to Cart Page.
+
+  - id: TASK-009
+    title: Build Cart Page
+    depends_on: [TASK-006]
+    components: [Cart Page, CartContext]
+    stories: [US-002]
+    requirements: [CART-004, CART-005, CART-006, CART-007]
+    description: >-
+      Client-side page reading from CartContext. Render line items
+      with quantity controls (+/- buttons) and remove button.
+      Display running total. "Proceed to Checkout" button.

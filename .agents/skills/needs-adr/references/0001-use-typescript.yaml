@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=../schemas/adr.schema.json
+
+schema_version: "1.0.0"
+id: ADR-0001
+title: Use TypeScript for Backend and Frontend
+status: Accepted
+date: "2026-02-18"
+deciders: Engineering team
+
+context: >-
+  The project requires a language for both backend (API server) and frontend
+  (web application). Using the same language across the stack reduces context
+  switching and enables code sharing (validation logic, types, utilities).
+
+decision: >-
+  Use TypeScript for both backend and frontend development. The backend will
+  run on Node.js with a TypeScript-first framework. The frontend will use a
+  TypeScript-first UI framework.
+
+consequences:
+  easier:
+    - Shared type definitions between frontend and backend
+    - Single language expertise required for the team
+    - Large ecosystem of TypeScript-compatible libraries
+  harder:
+    - CPU-intensive operations are slower than compiled languages
+    - Runtime type checking requires additional tooling (e.g., Zod, io-ts)
+
+alternatives:
+  - name: Go backend + TypeScript frontend
+    reason_rejected: >-
+      Strong performance and type safety on the backend, but requires
+      maintaining two languages and duplicating type definitions across
+      the stack.
+
+  - name: Python backend + TypeScript frontend
+    reason_rejected: >-
+      Rapid backend prototyping with Python, but loses type sharing and
+      requires separate teams or skill sets.

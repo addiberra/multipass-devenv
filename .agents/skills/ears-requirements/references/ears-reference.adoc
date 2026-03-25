@@ -1,0 +1,215 @@
+
+= EARS Requirements - Quick Reference
+:toc:
+:toclevels: 2
+
+EARS (Easy Approach to Requirements Syntax) is a lightweight way to write clear, testable "shall" requirements using a small set of sentence patterns.
+
+== General Rules
+
+* Use: "The <system/component> shall <behavior>".
+* Prefer one primary behavior per requirement; split "and/or" chains.
+* Use observable, verifiable language (formats, limits, timings, state changes).
+* Put conditions in the EARS prefix; keep the "shall" clause focused on the response.
+* Name actors, states, events, and data consistently.
+
+== Generic Requirement Syntax
+
+EARS treats requirements as a combination of:
+
+* *Preconditions* (when the requirement can apply)
+* *Trigger* (the event that initiates a response)
+* *System response* (what the system does)
+
+In general form:
+
+ <optional preconditions> <optional trigger> the <system> shall <system response>.
+
+== Sentence Types (Patterns)
+
+=== Ubiquitous
+
+Applies at all times; no explicit trigger.
+
+*Template:*
+
+ The <system> shall <response>.
+
+*Example:*
+
+ The API shall return responses in JSON format.
+
+=== Event-driven
+
+Triggered by an event.
+
+*Template:*
+
+ When <optional preconditions> <trigger>, the <system> shall <response>.
+
+*Examples:*
+
+ When the user submits a valid order, the system shall create an order record.
+ When a payment is declined, the system shall notify the user.
+
+=== State-driven
+
+Applies while in a state/mode.
+
+*Templates:*
+
+ While <in state>, the <system> shall <response>.
+
+*Note:*
+
+ "During" can be used instead of "While" purely for readability.
+
+*Examples:*
+
+ While in Maintenance Mode, the service shall reject non-admin requests with HTTP 503.
+
+=== Optional feature
+
+Applies only when a feature/configuration is present or enabled.
+
+*Template:*
+
+ Where <feature is included>, the <system> shall <response>.
+
+*Examples:*
+
+ Where two-factor authentication is enabled, the system shall require a one-time code at login.
+ Where audit logging is enabled, the service shall record an audit entry for each administrative change.
+
+=== Unwanted behavior
+
+Describes behavior for invalid inputs, faults, or undesirable conditions.
+
+*Template:*
+
+ If <optional preconditions> <trigger>, then the <system> shall <response>.
+
+*Examples:*
+
+ If the uploaded file exceeds 10 MB, the system shall reject the upload and display an error message.
+ If the database is unavailable, the service shall return HTTP 503 within 2 seconds.
+
+=== Complex (combined)
+
+For multi-clause requirements, you can chain *Where* (feature), *While* (state), and *When* (event) to capture the full context before the "shall" response.
+
+You can also nest *Where/While/When* context inside *If* ... *then* statements for unwanted behaviour.
+
+*Templates:*
+
+ While <state>, when <trigger>, the <system> shall <response>.
+ Where <feature is included>, while <state>, when <trigger>, the <system> shall <response>.
+
+*Examples:*
+
+ While the user is unauthenticated, when the user requests the account page, the system shall redirect to the login page.
+ Where the cart is empty, when the user selects Checkout, the system shall display a message that checkout is unavailable.
+ When a webhook delivery fails, if the retry count exceeds 5, then the system shall mark the endpoint as inactive.
+ Where premium billing is enabled, while the subscription is active, when the billing period ends, the system shall generate an invoice.
+
+== Checking for Completeness
+
+=== Truth Tables
+
+When a function operates across multiple states or modes, build a truth table of every combination. Each cell is a potential requirement. Missing cells often reveal missing requirements.
+
+=== Function-Level Review
+
+For each system function, ask:
+
+. Is there a requirement for normal operation? (Ubiquitous)
+. Does it have accuracy, timing, or sequencing constraints?
+. Under what conditions does it activate? (Event-driven or state-driven)
+. Are there availability or reliability requirements?
+. What happens on failure or invalid input? (Unwanted behavior)
+
+=== Requirement Pairing
+
+Requirements often come in pairs. When writing one side, check the other:
+
+* Wanted / Unwanted (normal vs. error handling)
+* Primary / Backup (main vs. fallback mode)
+* Enable / Disable (activate vs. deactivate)
+* Start / Stop (initiate vs. terminate)
+
+=== Traceability Through Structure
+
+Each clause in a combined requirement (Where, While, When) implies a sub-function that may need its own lower-level requirement. Use the structure of combined requirements as a traceability aid.
+
+== Choosing a Pattern
+
+* Always true -> Ubiquitous
+* Triggered by an event -> Event-driven
+* Depends on a state/mode -> State-driven
+* Depends on a feature -> Optional feature
+* Error/invalid/failure handling -> Unwanted behavior
+* Needs both preconditions and a trigger -> Complex
+
+=== Ubiquitous vs. Event-Driven
+
+If unclear whether a behavior is always-on or only triggered by change, consider the criticality and operational context. Ask the stakeholder whether the system must continuously demonstrate the behavior or only respond when triggered.
+
+=== Passive vs. Active Response
+
+Some requirements demand tolerance without active response (passive), others require detection and action (active):
+
+* *Passive:* The system shall be immune to <condition>.
+* *Active:* When <condition is detected>, the system shall <response>.
+
+== Steps to Apply EARS
+
+. Identify whether the statement is a requirement (vs note/example/decision).
+. Split compound requirements into atomic requirements.
+. Identify the acting system, person, or process.
+. Select the sentence type(s) that match the trigger/conditions.
+. Check for missing requirements (states x events often imply combinations).
+. Review for ambiguity, conflict, repetition, and testability.
+
+== Quick Checklist
+
+* Actor named ("The <system>...")
+* Correct pattern for the trigger/condition
+* Conditions are specific (state names, thresholds)
+* Response is observable/verifiable
+* Avoids vague terms ("fast", "user-friendly", "appropriate")
+* Atomic (one behavior per requirement; no "and/or" chains)
+* States _what_, not _how_ (no implementation detail)
+* Paired requirements considered (error path, backup mode, enable/disable)
+* Completeness checked (truth table or function-level review for gaps)
+
+== Troubleshooting
+
+* No sentence type fits: increase abstraction until it fits, or ask for stakeholder intent.
+* Cannot identify the actor: common for nonfunctional constraints; express as "The system shall be ...".
+* "Shall not": prefer positive phrasing (e.g., "shall reject", "shall prevent", "shall be immune"); use "shall not" only as a last resort.
+* Too many atomic requirements: deep technical constraints may need a different format or an accompanying list.
+* Ubiquitous or event-driven?: ask the stakeholder. See "Ubiquitous vs. Event-Driven" above.
+* Passive or active?: decide whether the design is inherently tolerant or must detect and respond. See "Passive vs. Active Response" above.
+* Multiple actors for the same trigger: write separate requirements per actor or explicitly list authorized actors. EARS preconditions force you to name the actor, which surfaces authorization conflicts early.
+* Recovery from unwanted states: EARS has If-Then for unwanted _behaviors_ (events), but no dedicated pattern for unwanted _states_. Model these as state-driven: "While <in unwanted state>, the system shall <recovery response>."
+
+== Quick Templates (Copy/Paste)
+
+* Ubiquitous: The <system> shall <response>.
+* Event-driven: When <optional preconditions> <trigger>, the <system> shall <response>.
+* State-driven: While <state>, the <system> shall <response>.
+* Optional feature: Where <feature is included>, the <system> shall <response>.
+* Unwanted behavior: If <optional preconditions> <trigger>, then the <system> shall <response>.
+* Complex: Where <feature is included>, while <state>, when <trigger>, the <system> shall <response>.
+
+== Attribution
+
+EARS was originally described in:
+
+* Mavin, A., Wilkinson, P., Harwood, A., and Novak, M., "Easy Approach to Requirements Syntax (EARS)", Proceedings of the 17th IEEE International Requirements Engineering Conference (RE), 2009.
+
+Completeness techniques, lessons on requirement pairing, passive/active distinctions, and additional troubleshooting guidance are informed by:
+
+* Mavin, A. and Wilkinson, P., "Big EARS (The Return of Easy Approach to Requirements Syntax)", Proceedings of the 18th IEEE International Requirements Engineering Conference (RE), 2010.
+
+This material is an original summary and interpretation of the EARS approach as described in the cited IEEE publications.

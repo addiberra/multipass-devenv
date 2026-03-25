@@ -1,0 +1,13 @@
+# Project Constraints
+
+**Version:** {{ doc.version }} | **Updated:** {{ doc.last_updated }}
+
+{% for cat in doc.categories %}
+## {{ cat.name }}
+
+{% for c in cat.constraints %}
+- **{{ c.id }}:** {{ c.text }}
+  {% if c.rationale is defined and c.rationale %}*Rationale: {{ c.rationale }}*{% endif %}
+{% endfor %}
+
+{% endfor %}

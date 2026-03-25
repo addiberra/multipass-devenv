@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://provenimpact.github.io/proven-needs/schemas/constraints.schema.json",
+  "title": "Project Constraints",
+  "description": "Project-wide invariants that must not be violated across any state transition. Constraints are organized by category and each has a unique ID for traceability. The top-level 'version' field is a repository-specific schema metadata extension consumed by the validation scripts.",
+  "version": "1.0.0",
+  "type": "object",
+  "required": ["schema_version", "version", "last_updated", "categories"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Version of the constraints schema this file was written against."
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "SemVer version of this constraints file."
+    },
+    "last_updated": {
+      "type": "string",
+      "format": "date",
+      "description": "Date of last update in YYYY-MM-DD format."
+    },
+    "categories": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Constraint categories (e.g., Security, Licensing, Architecture, Quality, Performance).",
+      "items": {
+        "$ref": "#/$defs/category"
+      }
+    }
+  },
+  "$defs": {
+    "category": {
+      "type": "object",
+      "required": ["name", "constraints"],
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Category name (e.g., 'Security', 'Licensing', 'Architecture')."
+        },
+        "constraints": {
+          "type": "array",
+          "minItems": 1,
+          "description": "Constraints within this category.",
+          "items": {
+            "$ref": "#/$defs/constraint"
+          }
+        }
+      }
+    },
+    "constraint": {
+      "type": "object",
+      "required": ["id", "text"],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^C-\\d{3}$",
+          "description": "Unique constraint ID (e.g., 'C-001'). Sequential across the entire file."
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "description": "The constraint text. Should be a clear, enforceable rule."
+        },
+        "rationale": {
+          "type": "string",
+          "description": "Optional explanation of why this constraint exists."
+        },
+        "added": {
+          "type": "string",
+          "format": "date",
+          "description": "Date when this constraint was added."
+        }
+      }
+    }
+  }
+}

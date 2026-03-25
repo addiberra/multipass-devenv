@@ -1,0 +1,210 @@
+= Design Example
+
+This file shows a complete design document for the `shopping-cart` feature of an e-commerce project. The feature's spec.yaml requirements are used as input. The design includes Mermaid diagrams for component interactions and the primary user flow.
+
+== Context
+
+Given:
+
+* `docs/features/shopping-cart/spec.yaml` with stories US-001 (Add to Cart) and US-002 (View Cart), requirements CART-001 through CART-007
+* `docs/adrs/0001-use-typescript.yaml` (Accepted)
+* `docs/adrs/0002-use-postgresql.yaml` (Accepted)
+* `docs/adrs/0003-use-nextjs.yaml` (Accepted)
+* `docs/constraints.yaml` with architecture constraint: "Business logic resides in the service layer"
+
+== Design File (docs/features/shopping-cart/design.adoc)
+
+....
+= Design: Shopping Cart
+:version: 1.0.0
+:source-spec-version: 1.0.0
+:status: Current
+:last-updated: 2026-02-20
+:feature: shopping-cart
+:toc:
+
+== Technical Context
+
+Adding cart management to an existing e-commerce web application built with Next.js and PostgreSQL. The product browsing feature is already implemented. Users need to add products to a cart, adjust quantities, and review their cart before checkout.
+
+== Decisions and Constraints
+
+* ADR-0001: Use TypeScript for backend and frontend (see docs/adrs/0001-use-typescript.yaml)
+* ADR-0002: Use PostgreSQL for persistence (see docs/adrs/0002-use-postgresql.yaml)
+* ADR-0003: Use Next.js as the fullstack framework (see docs/adrs/0003-use-nextjs.yaml)
+
+Architecture constraint: Business logic resides in the service layer, not in route handlers.
+
+== Research and Unknowns
+
+=== Resolved
+
+Cart persistence strategy:: Use database-backed carts with session_id for anonymous users. CartContext (React Context) provides client-side state. Synced with backend on mutations.
+
+=== Open Questions
+
+None.
+
+== System Design
+
+=== Component Interaction
+
+[source,mermaid]
+----
+flowchart LR
+  subgraph Frontend
+    PC[ProductCard]
+    CP[Cart Page]
+    CC[CartContext]
+    CI[CartIcon]
+  end
+
+  subgraph API["API Routes"]
+    POST_CART["POST /api/cart/items"]
+    PATCH_CART["PATCH /api/cart/items/:id"]
+    DELETE_CART["DELETE /api/cart/items/:id"]
+  end
+
+  subgraph Service["Service Layer"]
+    CS[CartService]
+  end
+
+  DB[(PostgreSQL)]
+
+  PC -->|add item| POST_CART
+  CP -->|update qty| PATCH_CART
+  CP -->|remove item| DELETE_CART
+  POST_CART --> CS
+  PATCH_CART --> CS
+  DELETE_CART --> CS
+  CS --> DB
+  POST_CART -->|response| CC
+  PATCH_CART -->|response| CC
+  DELETE_CART -->|response| CC
+  CC --> CI
+  CC --> CP
+----
+
+=== Add-to-Cart Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+  actor User
+  participant PC as ProductCard
+  participant CC as CartContext
+  participant API as POST /api/cart/items
+  participant CS as CartService
+  participant DB as PostgreSQL
+
+  User->>PC: Click "Add to Cart"
+  PC->>API: POST {productId, quantity}
+  API->>CS: addItem(sessionId, productId, qty)
+  CS->>DB: Check stock availability
+  DB-->>CS: Stock OK
+  CS->>DB: Upsert CartItem (increment if exists)
+  DB-->>CS: Updated cart
+  CS-->>API: Cart response
+  API-->>PC: 200 OK + updated cart
+  PC->>CC: Update cart state
+  CC-->>PC: Show success toast
+  CC->>PC: Update CartIcon count
+----
+
+=== Frontend
+
+==== Cart Page
+Client-side interactive page. Reads cart state from CartContext. Renders line items with quantity controls and a running total. "Proceed to Checkout" navigates to the checkout flow.
+
+==== Shared Components
+* `CartIcon` -- header icon showing item count from CartContext, links to Cart Page
+* Add-to-cart button integrated into existing ProductCard component
+
+=== Backend (API Routes)
+
+==== POST /api/cart/items
+Adds an item to the cart. Body: `{ productId, quantity }`. Creates cart with session_id if none exists. Validates stock availability via CartService. Returns updated cart.
+
+==== PATCH /api/cart/items/:id
+Updates quantity of a cart item. Body: `{ quantity }`. Validates stock via CartService.
+
+==== DELETE /api/cart/items/:id
+Removes an item from the cart. Returns 204 on success.
+
+=== Service Layer
+
+==== CartService
+Business logic for cart operations. Enforces stock validation, quantity constraints, and duplicate handling. Called by API route handlers (not business logic in routes -- per architecture constraint).
+
+=== State Management
+
+CartContext (React Context) holds client-side cart state. Synced with backend on mutations. Persisted in localStorage for anonymous users.
+
+== Requirement Resolution
+
+=== US-001: Add to Cart
+
+Components:: ProductCard (existing), CartContext, CartIcon, POST /api/cart/items, CartService
+Requirements::
+* CART-001: Add product and update cart count -> ProductCard button triggers POST /api/cart/items via CartService, CartContext updates, CartIcon reflects count
+* CART-002: Display success confirmation -> CartContext triggers toast notification after successful API response
+* CART-003: Increment quantity for duplicates -> CartService checks if product exists in cart, increments quantity via upsert if so
+
+=== US-002: View Cart
+
+Components:: Cart Page, CartContext, PATCH /api/cart/items, DELETE /api/cart/items, CartService
+Requirements::
+* CART-004: Display cart items with details -> Cart Page reads CartContext, renders line items with names, quantities, prices
+* CART-005: Display correct cart total -> Cart Page computes total from CartContext items (price * quantity sum)
+* CART-006: Update quantity and recalculate -> PATCH /api/cart/items via CartService, CartContext updates, Cart Page re-renders with updated totals
+* CART-007: Remove item and recalculate -> DELETE /api/cart/items via CartService, CartContext updates, Cart Page removes item and recalculates total
+....
+
+== Data Model File (docs/features/shopping-cart/data-model.adoc)
+
+....
+= Data Model: Shopping Cart
+:version: 1.0.0
+:last-updated: 2026-02-20
+:feature: shopping-cart
+:toc:
+
+== Cart
+
+[cols="1,1,2", options="header"]
+|===
+| Field | Type | Notes
+
+| id | UUID | Primary key
+| session_id | VARCHAR(255) | For anonymous users, indexed
+| created_at | TIMESTAMP | Auto-set
+| updated_at | TIMESTAMP | Auto-updated
+|===
+
+== CartItem
+
+[cols="1,1,2", options="header"]
+|===
+| Field | Type | Notes
+
+| id | UUID | Primary key
+| cart_id | UUID | FK -> Cart, indexed
+| product_id | UUID | FK -> Product (from product-browsing feature)
+| quantity | INTEGER | Required, >= 1
+|===
+
+== Relationships
+
+* Cart 1--* CartItem
+* CartItem *--1 Product (cross-feature reference to existing entity)
+....
+
+== Notes
+
+- The design is scoped entirely to the shopping-cart feature
+- It references project-wide ADRs but does not depend on other feature designs
+- The Product entity is from the product-browsing feature -- the cart references it via foreign key but does not redefine it
+- Architecture constraint is explicitly respected: CartService contains business logic, route handlers only delegate
+- The component interaction diagram shows all components and their communication paths
+- The sequence diagram traces the primary add-to-cart flow through all layers
+- The `:source-spec-version:` tracks which spec.yaml version was used as input

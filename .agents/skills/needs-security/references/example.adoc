@@ -1,0 +1,69 @@
+= Security Example
+
+This file shows a security assessment and remediation cycle.
+
+== Context
+
+Given:
+
+* TypeScript/Next.js e-commerce application
+* `docs/constraints.yaml` with security constraints:
+  - "All user input must be validated before processing"
+  - "No dependency with a known CRITICAL or HIGH CVE may remain unpatched for more than 7 days"
+
+== Observation
+
+....
+Security posture:
+  dependency-vulnerabilities:
+    critical: 0
+    high: 0
+    medium: 1 (minimist@1.2.5 prototype pollution)
+    low: 0
+  code-patterns:
+    - {pattern: "Missing input validation", severity: medium,
+       file: "pages/api/cart/items.ts", line: 12,
+       detail: "Request body used directly without validation"}
+    - {pattern: "Missing input validation", severity: medium,
+       file: "pages/api/checkout.ts", line: 8,
+       detail: "Shipping address fields not validated"}
+  configuration-issues:
+    - {issue: "CORS allows all origins", severity: medium,
+       detail: "next.config.js sets Access-Control-Allow-Origin: *"}
+  constraint-violations:
+    - "All user input must be validated before processing" -- 2 API routes lack validation
+....
+
+== Evaluation
+
+....
+Action: remediate
+Findings by severity:
+  critical: 0, high: 0, medium: 4, low: 0
+
+Proposed remediations:
+  1. Add Zod validation schema for POST /api/cart/items body (medium)
+  2. Add Zod validation schema for POST /api/checkout body (medium)
+  3. Restrict CORS to application domain (medium)
+  4. Delegate minimist update to needs-dependencies (medium)
+....
+
+== Execution
+
+....
+1. Created lib/validation/cart.ts with Zod schema for cart item requests
+2. Updated pages/api/cart/items.ts to validate request body with schema
+3. Created lib/validation/checkout.ts with Zod schema for checkout requests
+4. Updated pages/api/checkout.ts to validate request body with schema
+5. Updated next.config.js to restrict CORS to application domain
+6. Delegated minimist update to needs-dependencies
+
+Verification:
+  - Security scan: 2 findings resolved (input validation)
+  - Build: pass
+  - Tests: pass
+  - Constraint check: "All user input must be validated" -- now satisfied
+
+Remaining:
+  - minimist update delegated to needs-dependencies (medium, not blocking)
+....

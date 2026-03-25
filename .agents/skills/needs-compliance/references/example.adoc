@@ -1,0 +1,68 @@
+= Compliance Example
+
+This file shows a license compliance audit and remediation cycle.
+
+== Context
+
+Given:
+
+* TypeScript/Next.js project with 47 dependencies
+* `docs/constraints.yaml` with licensing constraint (C-005): "Only MIT, Apache-2.0, and BSD-licensed dependencies are permitted"
+
+== Observation
+
+....
+Compliance:
+  total-dependencies: 142 (direct: 47, transitive: 95)
+  license-distribution:
+    MIT: 118
+    Apache-2.0: 12
+    BSD-3-Clause: 8
+    ISC: 2
+    GPL-3.0: 1
+    Unknown: 1
+  violations:
+    - {package: "node-forge@1.3.1", license: "GPL-3.0",
+       constraint: "Only MIT, Apache-2.0, and BSD-licensed dependencies",
+       type: transitive, via: "selfsigned -> node-forge"}
+  unknown-licenses:
+    - {package: "custom-colors@2.0.0", reason: "No license field in package.json"}
+....
+
+== Evaluation
+
+....
+Action: remediate
+Violations: 1 (GPL-3.0 via transitive dependency)
+Unknown licenses: 1
+
+Proposed remediations:
+  1. node-forge@1.3.1 (GPL-3.0): Replace selfsigned with a package that
+     uses a permissive-licensed forge alternative.
+     Alternative: @peculiar/x509 (MIT) for certificate generation.
+  2. custom-colors@2.0.0 (unknown): Research license. If non-compliant,
+     replace with chalk (MIT).
+....
+
+== Execution
+
+....
+1. Replaced selfsigned with @peculiar/x509 in dev dependencies
+   - Updated lib/dev/ssl.ts to use new API
+   - node-forge no longer in dependency tree
+
+2. Researched custom-colors: found it's MIT-licensed but missing the
+   license field in package.json. Author contacted.
+   - For safety, replaced with chalk (MIT) which has proper metadata
+
+3. Ran npm install -- lockfile updated
+
+Verification:
+  - License scan: 0 GPL dependencies (was 1)
+  - License scan: 0 unknown licenses (was 1)
+  - Build: pass
+  - Tests: pass (2 tests updated for new SSL library API)
+  - Constraint check: all dependencies now MIT, Apache-2.0, BSD, or ISC
+
+Result: Full license compliance achieved.
+....

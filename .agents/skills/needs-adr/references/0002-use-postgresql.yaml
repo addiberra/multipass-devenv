@@ -1,0 +1,39 @@
+# yaml-language-server: $schema=../schemas/adr.schema.json
+
+schema_version: "1.0.0"
+id: ADR-0002
+title: Use PostgreSQL for Persistence
+status: Accepted
+date: "2026-02-19"
+deciders: Engineering team
+
+context: >-
+  The e-commerce system requires persistent storage for users, products,
+  orders, and inventory. The data is relational in nature with strong
+  consistency requirements (e.g., order totals must match line items,
+  inventory must be accurately tracked).
+
+decision: >-
+  Use PostgreSQL as the primary database for all persistent data.
+
+consequences:
+  easier:
+    - Strong ACID compliance for financial transactions
+    - Rich querying capabilities (full-text search, JSON support, window functions)
+    - Mature ecosystem with well-documented migration tooling
+  harder:
+    - Horizontal scaling requires additional infrastructure (read replicas, partitioning)
+    - Schema migrations need careful planning in production
+
+alternatives:
+  - name: MongoDB
+    reason_rejected: >-
+      Flexible schema would speed up early development, but the relational
+      nature of e-commerce data (orders referencing products, users
+      referencing addresses) makes document storage awkward and risks data
+      inconsistency.
+
+  - name: SQLite
+    reason_rejected: >-
+      Simple to deploy and operate, but lacks concurrent write support
+      needed for a multi-user e-commerce system.

@@ -1,0 +1,164 @@
+= Architecture Example
+
+This file shows a complete architecture document for an e-commerce project, generated from the design documents in greenfield mode. The architecture uses C4 diagrams (Level 1-3) because this is a monolithic web application where the backend container has meaningful internal structure.
+
+== Architecture File (docs/architecture.adoc)
+
+....
+= System Architecture
+:version: 1.0.0
+:last-updated: 2026-02-20
+:toc:
+
+== Feature Design Sources
+
+[cols="1,1", options="header"]
+|===
+| Feature | Design Version
+
+| product-browsing | 1.0.0
+| shopping-cart | 1.0.0
+| checkout | 1.0.0
+|===
+
+== Overview
+
+E-commerce web application enabling users to browse products, manage a shopping cart, and complete purchases with online payment. Built as a monolithic Next.js application with server-rendered pages and API routes backed by PostgreSQL.
+
+== System Context (C4 Level 1)
+
+[source,mermaid]
+----
+C4Context
+  title System Context - E-Commerce Application
+
+  Person(customer, "Customer", "Browses products, manages cart, completes purchases")
+  System(ecommerce, "E-Commerce Application", "Allows customers to browse, cart, and buy products")
+  System_Ext(stripe, "Stripe", "Payment processing and PCI compliance")
+  System_Ext(email, "Email Service", "Transactional email delivery")
+
+  Rel(customer, ecommerce, "Browses, carts, checks out", "HTTPS")
+  Rel(ecommerce, stripe, "Processes payments", "HTTPS/JSON")
+  Rel(ecommerce, email, "Sends order confirmations", "HTTPS/JSON")
+----
+
+The system serves customers through a web interface. It integrates with Stripe for payment processing (ADR-0004) and an external email service for order confirmation delivery.
+
+== Container View (C4 Level 2)
+
+[source,mermaid]
+----
+C4Container
+  title Container Diagram - E-Commerce Application
+
+  Person(customer, "Customer", "Browses, carts, buys")
+
+  System_Boundary(ecommerce, "E-Commerce Application") {
+    Container(nextjs, "Next.js Application", "TypeScript, Next.js", "Server-rendered pages and API routes")
+    ContainerDb(postgres, "PostgreSQL Database", "PostgreSQL", "Products, carts, orders")
+  }
+
+  System_Ext(stripe, "Stripe", "Payment processing")
+  System_Ext(email, "Email Service", "Transactional emails")
+
+  Rel(customer, nextjs, "Uses", "HTTPS")
+  Rel(nextjs, postgres, "Reads/writes", "SQL")
+  Rel(nextjs, stripe, "Creates PaymentIntents", "HTTPS/JSON")
+  Rel(nextjs, email, "Sends confirmations", "HTTPS/JSON")
+----
+
+The application is a monolith: a single Next.js container handles both server-rendered frontend pages and backend API routes. PostgreSQL stores all persistent data.
+
+Technology choices:
+
+[cols="1,2,2", options="header"]
+|===
+| Category | Technology | Rationale
+
+| Language
+| TypeScript
+| ADR-0001: Shared across frontend and backend
+
+| Framework
+| Next.js
+| ADR-0003: SSR for SEO, API routes for backend
+
+| Database
+| PostgreSQL
+| ADR-0002: ACID compliance for transactions
+
+| Payments
+| Stripe
+| ADR-0004: PCI compliance, hosted checkout
+|===
+
+== Component View (C4 Level 3)
+
+The Next.js application container has meaningful internal structure: server-rendered pages, client-side interactive pages, API route handlers, and a service layer.
+
+[source,mermaid]
+----
+C4Component
+  title Component Diagram - Next.js Application
+
+  Container_Boundary(nextjs, "Next.js Application") {
+    Component(pages_ssr, "Product Pages", "Next.js SSR", "Server-rendered product listing and detail pages")
+    Component(pages_csr, "Cart & Checkout Pages", "React", "Client-side interactive cart and checkout flow")
+    Component(cart_context, "CartContext", "React Context", "Client-side cart state, synced with backend")
+    Component(api_products, "Product API", "Next.js API Routes", "GET /api/products, GET /api/products/:id")
+    Component(api_cart, "Cart API", "Next.js API Routes", "POST/PATCH/DELETE /api/cart/items")
+    Component(api_checkout, "Checkout API", "Next.js API Routes", "POST /api/checkout")
+    Component(cart_service, "CartService", "TypeScript", "Cart business logic, stock validation")
+    Component(checkout_service, "CheckoutService", "TypeScript", "Order creation, payment orchestration")
+  }
+
+  ContainerDb(postgres, "PostgreSQL", "PostgreSQL", "Products, carts, orders")
+  System_Ext(stripe, "Stripe", "Payment processing")
+  System_Ext(email, "Email Service", "Transactional emails")
+
+  Rel(pages_ssr, api_products, "Fetches product data")
+  Rel(pages_csr, cart_context, "Reads cart state")
+  Rel(pages_csr, api_cart, "Cart mutations")
+  Rel(pages_csr, api_checkout, "Submits order")
+  Rel(api_cart, cart_service, "Delegates")
+  Rel(api_checkout, checkout_service, "Delegates")
+  Rel(cart_service, postgres, "Reads/writes carts")
+  Rel(checkout_service, postgres, "Creates orders")
+  Rel(checkout_service, stripe, "Creates PaymentIntent")
+  Rel(checkout_service, email, "Sends confirmation")
+  Rel(api_products, postgres, "Reads products")
+----
+
+Architecture constraint: Business logic resides in the service layer (CartService, CheckoutService), not in API route handlers.
+
+== Technology Stack
+
+* ADR-0001: TypeScript (backend and frontend) -- see docs/adrs/0001-use-typescript.yaml
+* ADR-0002: PostgreSQL (persistence) -- see docs/adrs/0002-use-postgresql.yaml
+* ADR-0003: Next.js (fullstack framework) -- see docs/adrs/0003-use-nextjs.yaml
+* ADR-0004: Stripe (payment processing) -- see docs/adrs/0004-use-stripe.yaml
+
+== Data Architecture
+
+PostgreSQL database with five tables: Product, Cart, CartItem, Order, OrderItem. See feature data models for full schemas.
+
+Key data flows:
+
+* Product data flows from database -> API -> server-rendered pages
+* Cart mutations flow from frontend -> API -> CartService -> database, with optimistic updates via CartContext
+* Checkout creates an Order from Cart, snapshots prices into OrderItems, processes payment via Stripe, triggers confirmation email
+
+== Cross-Cutting Concerns
+
+=== Error Handling
+Stock validation on cart mutations and checkout. Stripe payment failure handling with user-facing error messages. API routes return structured error responses.
+
+=== Security
+Stripe handles PCI compliance for payment data. Session-based cart identification. Input validation on all API routes.
+....
+
+== Notes
+
+- Deployment View (C4 Level 4) is omitted because this is a single-host monolith with no complex deployment topology.
+- Component View focuses on the Next.js application container because it contains all the application logic. The PostgreSQL container has no internal component structure worth diagramming.
+- The C4 diagrams show the same system at increasing levels of detail: Context (what interacts with the system), Container (what the system is made of), Component (how each container is organized internally).

@@ -1,0 +1,264 @@
+= Design: Multipass Development Environment
+:version: 1.0.0
+:source-spec-version: 1.0.0
+:status: Current
+:last-updated: 2026-03-25
+:feature: multipass-dev-env
+:toc:
+
+== Technical Context
+
+This is a greenfield project to create a secure, preconfigured Multipass development environment for agentic AI coding. The environment uses Ubuntu 24.04 LTS inside Multipass VMs with opencode pre-installed and configured for OpenAI API access. Security controls follow NVIDIA's practical security guidance for sandboxing agentic workflows.
+
+== Decisions and Constraints
+
+No prior ADRs exist for this project. All decisions are recorded here.
+
+=== VM Isolation Strategy
+
+*Decision:* No host directories are mounted into the VM. The VM clones repositories internally.
+
+*Rationale:* Per NVIDIA guidance, preventing reads from files outside the workspace and blocking writes outside the workspace provides the strongest isolation. With cloning, the agent can only access what exists inside the VM.
+
+=== Network Security
+
+*Decision:* UFW (Uncomplicated Firewall) is configured inside the VM with default-deny incoming and allowlist for HTTP/HTTPS outgoing.
+
+*Rationale:* NVIDIA guidance specifies mandatory network egress controls. Allowing only HTTP/HTTPS limits exfiltration vectors while enabling API calls to LLM providers.
+
+=== Secret Management
+
+*Decision:* API keys are injected at runtime via environment variables passed through `multipass exec --env`. Keys are never written to disk inside the VM.
+
+*Rationale:* NVIDIA recommends explicit secret injection rather than inheriting host credentials. This scopes credentials to only what the task requires.
+
+=== VM Lifecycle
+
+*Decision:* Snapshots enable returning to a known-good state. Periodic destroy + recreate prevents accumulation of state.
+
+*Rationale:* NVIDIA recommends lifecycle management controls to prevent accumulation of intellectual property and secrets in the sandbox.
+
+== Research and Unknowns
+
+=== Resolved
+
+Config-driven approach:: A `config.yaml` file specifies VM specs, repositories to clone, and opencode configuration. Scripts read from this config.
+
+UFW rule persistence:: UFW rules must be saved to survive reboots. Cloud-init enables UFW and sets rules, which persist.
+
+Snapshot naming:: Snapshots are named with pattern `clean-YYYY-MM-DD` to indicate they capture the post-setup state.
+
+=== Open Questions
+
+None.
+
+== System Design
+
+=== Component Interaction
+
+[source,mermaid]
+----
+flowchart LR
+  subgraph Host
+    H[Host Machine]
+    CFG[config.yaml]
+    OC[opencode config]
+  end
+
+  subgraph Multipass
+    VM[Multipass VM\n"opencode-dev"]
+    CI[cloud-init]
+  end
+
+  subgraph VM_Internal
+    WS[/workspace]
+    OC_CFG[~/.config/\nopencode]
+    UFW[UFW Firewall]
+  end
+
+  H -->|multipass launch\nwith cloud-init| VM
+  CFG -->|read during\nlaunch| VM
+  VM --> CI
+  CI -->|provision\n+ install| VM_Internal
+  H -->|multipass shell| VM
+  H -->|multipass exec\n--env KEY| VM
+  OC -->|mounted read-only\nor env-var| VM
+  VM --> WS
+  VM --> UFW
+  UFW -->|allow 80,443\ndeny other| Net[Network]
+  WS -->|cloned repos| VM
+----
+
+=== Scripts
+
+==== launch.sh
+
+Creates the Multipass VM using cloud-init for provisioning:
+
+1. Reads `config.yaml` to get VM specs and repository list
+2. Runs `multipass launch` with:
+   - `--name opencode-dev`
+   - `--cpus`, `--memory`, `--disk` from config
+   - `--cloud-init` pointing to `cloud-init.yaml`
+3. Waits for VM to be ready
+4. Injects `OPENAI_API_KEY` via `multipass exec --env` for verification
+5. Creates initial snapshot named `clean-YYYY-MM-DD`
+
+==== shell.sh
+
+Connects to the VM:
+
+1. Checks if VM is running via `multipass info opencode-dev`
+2. If not running, displays error with suggestion to run launch.sh
+3. If running, executes `multipass shell opencode-dev`
+
+==== clone-repo.sh
+
+Clones additional repositories into running VM:
+
+1. Takes two arguments: `URL PATH`
+2. Executes `git clone URL PATH` inside VM via `multipass exec`
+3. Repository is cloned into `/workspace` subtree
+
+==== snapshot.sh
+
+Creates a dated snapshot:
+
+1. Checks VM is running
+2. Runs `multipass snapshot opencode-dev --name clean-YYYY-MM-DD`
+3. Reports snapshot creation
+
+==== destroy.sh
+
+Tears down the VM completely:
+
+1. Stops the VM: `multipass stop opencode-dev`
+2. Deletes the VM: `multipass delete opencode-dev`
+3. Purges all data: `multipass purge`
+
+=== Cloud-Init Configuration
+
+==== Package Installation
+
+Installs: `opencode`, `git`, `build-essential`, `ufw`
+
+==== User Setup
+
+Creates user `dev` with sudo access. SSH keys can be added via cloud-init if needed.
+
+==== UFW Configuration
+
+[source,yaml]
+----
+# Enable UFW
+ufw:
+  enable: true
+  default_policy: deny
+  output_policy: allow
+  rules:
+    - to_port: 80
+      protocol: tcp
+      comment: "HTTP for API calls"
+    - to_port: 443
+      protocol: tcp
+      comment: "HTTPS for API calls"
+----
+
+==== Workspace Setup
+
+Creates `/workspace` directory. Clones repositories from `config.yaml` repos list.
+
+==== OpenCode Configuration
+
+[source,yaml]
+----
+write_files:
+  - path: /home/dev/.config/opencode/opencode.json
+    content: |
+      {
+        "$schema": "https://opencode.ai/config.json",
+        "provider": {
+          "openai": {
+            "options": {
+              "apiKey": "{env:OPENAI_API_KEY}"
+            }
+          }
+        },
+        "enabled_providers": ["openai"],
+        "permission": {
+          "bash": "ask",
+          "edit": "ask"
+        }
+      }
+----
+
+=== Directory Structure
+
+[source]
+----
+multipass-devenv/
+├── config.yaml.example
+├── cloud-init.yaml
+├── scripts/
+│   ├── launch.sh
+│   ├── shell.sh
+│   ├── clone-repo.sh
+│   ├── snapshot.sh
+│   └── destroy.sh
+└── docs/features/multipass-dev-env/
+    ├── spec.yaml
+    └── design.adoc
+----
+
+== Requirement Resolution
+
+=== US-001: Launch Development Environment
+
+Components:: launch.sh, cloud-init.yaml, config.yaml
+Requirements::
+* MDEV-001: Create VM with specified specs -> launch.sh reads config, passes --cpus/--memory/--disk to multipass launch
+* MDEV-002: Install opencode within VM -> cloud-init installs opencode package
+* MDEV-003: Inject OPENAI_API_KEY at runtime -> launch.sh uses `multipass exec --env OPENAI_API_KEY` to verify key is available; opencode.json references {env:OPENAI_API_KEY}
+* MDEV-004: Clone repositories into /workspace -> cloud-init clones each repo from config into /workspace
+
+=== US-002: Secure Network Configuration
+
+Components:: cloud-init.yaml (UFW configuration)
+Requirements::
+* MDEV-005: UFW deny incoming by default -> cloud-init sets ufw.default_policy: deny
+* MDEV-006: UFW allow HTTP/HTTPS outgoing -> cloud-init adds rules for ports 80, 443
+* MDEV-007: Block other outgoing connections -> UFW default-deny output policy blocks non-80/443
+
+=== US-003: Workspace Isolation
+
+Components:: cloud-init.yaml (no mount configuration)
+Requirements::
+* MDEV-008: Agent access only within /workspace -> No directories outside /workspace exist in VM; agent cannot read/write elsewhere
+* MDEV-009: No host directory mounts -> launch.sh does not use --mount; multipass info shows no Mounts
+
+=== US-004: Interactive Shell Access
+
+Components:: shell.sh
+Requirements::
+* MDEV-010: Connect via multipass shell -> shell.sh executes `multipass shell opencode-dev`
+* MDEV-011: Inform user if VM not running -> shell.sh checks `multipass info` and displays error if not running
+
+=== US-005: Lifecycle Management
+
+Components:: snapshot.sh, destroy.sh
+Requirements::
+* MDEV-012: Create dated snapshot -> snapshot.sh runs `multipass snapshot --name clean-YYYY-MM-DD`
+* MDEV-013: Stop, delete, purge VM -> destroy.sh runs stop, delete, purge sequence
+
+=== US-006: Additional Repository Cloning
+
+Components:: clone-repo.sh
+Requirements::
+* MDEV-014: Clone repo into /workspace -> clone-repo.sh takes URL and PATH args, runs `git clone URL PATH` via multipass exec
+
+=== US-006: OpenCode Configuration
+
+Components:: cloud-init.yaml (opencode config file)
+Requirements::
+* MDEV-015: Create opencode.json with env var reference -> cloud-init writes /home/dev/.config/opencode/opencode.json with {env:OPENAI_API_KEY}
+* MDEV-016: Configure permission prompts -> opencode.json includes permission.bash: "ask" and permission.edit: "ask"
