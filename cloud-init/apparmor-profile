@@ -1,0 +1,74 @@
+# AppArmor profile for opencode workspace isolation
+# Restricts write operations to /home/opencode/workspace/
+# Loaded by cloud-init during VM initialization
+#
+# See docs/constraints.yaml C-007, C-009
+# See specs DEV-018, DEV-019, DEV-020
+
+#include <tunables/global>
+
+profile opencode-workspace /home/opencode/.{,*/}bin/opencode flags=(attach_disconnected) {
+  # Required for basic process operation
+  capability dac_override,
+  capability dac_read_search,
+
+  # Read access to most system files
+  /usr/** r,
+  /bin/** r,
+  /lib/** r,
+  /lib64/** r,
+  /etc/** r,
+
+  # Full access to workspace - this is where all work happens
+  /home/opencode/workspace/** rw,
+  /home/opencode/workspace/ rw,
+
+  # Git configuration (read-write during initial setup, then read-only)
+  /home/opencode/.gitconfig rw,
+  
+  # SSH known hosts (read-write during initial setup, then read-only)
+  /home/opencode/.ssh/known_hosts rw,
+  /home/opencode/.ssh/ r,
+
+  # OpenCode config directory - read and execute
+  /home/opencode/.config/opencode/ r,
+  /home/opencode/.config/opencode/** r,
+  
+  # Temporary files for tools
+  /tmp/opencode-** rw,
+  /tmp/** r,
+
+  # Network access for allowed operations
+  network inet tcp,
+  network inet udp,
+  network inet6 tcp,
+  network inet6 udp,
+
+  # Python package cache
+  /home/opencode/.cache/pip/ rw,
+  /home/opencode/.cache/pip/** rw,
+
+  # Node.js cache
+  /home/opencode/.npm/ rw,
+  /home/opencode/.npm/** rw,
+
+  # Explicit denies for security boundaries
+  deny /home/opencode/.config/opencode/** w,
+  deny /home/opencode/.ssh/id_* w,
+  deny /root/** rw,
+  deny /etc/ssh/** w,
+  deny /**.ssh/** w,
+
+  # System directories - read only where needed
+  /var/lib/apt/lists/** r,
+  /var/cache/apt/** r,
+
+  # Process execution for git, python, node
+  /usr/bin/git PUx,
+  /usr/bin/python* PUx,
+  /usr/bin/node PUx,
+  /usr/bin/npm PUx,
+
+  # Logging
+  /var/log/** w,
+}

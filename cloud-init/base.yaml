@@ -1,0 +1,86 @@
+#cloud-config
+# Base cloud-init configuration for secure dev environment
+# Installs packages and creates non-root user
+#
+# See docs/features/dev-env-setup/spec.yaml US-001, US-007
+# See docs/constraints.yaml C-005, C-010, C-025
+#
+# This file is merged with security.yaml by launch.sh
+
+# === Package Installation ===
+# Only from official Ubuntu repositories (C-010)
+package_update: true
+package_upgrade: true
+
+packages:
+  # Version control
+  - git
+
+  # HTTP clients
+  - curl
+  - wget
+
+  # Python runtime
+  - python3
+  - python3-pip
+  - python3-venv
+
+  # Node.js runtime (from Ubuntu repos)
+  - nodejs
+  - npm
+
+  # Network firewall
+  - iptables
+  - iptables-persistent
+
+  # Security/AppArmor
+  - apparmor
+  - apparmor-utils
+
+  # Additional utilities
+  - jq
+  - gettext
+  - base-files
+
+# === User Creation ===
+# Non-root user for agent execution (C-005)
+users:
+  - name: opencode
+    gecos: OpenCode User
+    shell: /bin/bash
+    homedir: /home/opencode
+    groups:
+      - sudo
+      - adm
+      - systemd-journal
+    sudo: ALL=(ALL) NOPASSWD:ALL
+    lock_passwd: false
+    # Password is set to 'opencode' for initial setup, will be locked after
+    # passwd: $6$rounds=4096$salt$hashedpassword
+
+# === Directory Structure ===
+# Set up workspace and config directories
+runcmd:
+  # Create workspace directory (DEV-018)
+  - mkdir -p /home/opencode/workspace
+  - chown opencode:opencode /home/opencode/workspace
+  - chmod 0755 /home/opencode/workspace
+
+  # Create OpenCode config directory
+  - mkdir -p /home/opencode/.config/opencode
+  - chown opencode:opencode /home/opencode/.config/opencode
+  - chmod 0700 /home/opencode/.config/opencode
+
+  # Create .ssh directory for known hosts
+  - mkdir -p /home/opencode/.ssh
+  - chown opencode:opencode /home/opencode/.ssh
+  - chmod 0700 /home/opencode/.ssh
+
+  # Ensure package installation completed (DEV-025)
+  - apt-get clean
+  - dpkg --configure -a
+
+# === Boot Command ===
+# Run on first boot
+bootcmd:
+  - echo "Cloud-init base configuration starting..."

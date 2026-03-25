@@ -1,0 +1,62 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "network-whitelist.schema.json",
+  "title": "Network Whitelist Configuration",
+  "description": "Schema for network egress whitelist configuration",
+  "type": "object",
+  "required": ["egress_allowed", "dns_servers"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Schema version"
+    },
+    "egress_allowed": {
+      "type": "array",
+      "description": "List of allowed egress destinations",
+      "items": {
+        "type": "object",
+        "required": ["domain", "ports"],
+        "properties": {
+          "domain": {
+            "type": "string",
+            "description": "Domain name (e.g., github.com)"
+          },
+          "ports": {
+            "type": "array",
+            "items": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65535
+            },
+            "description": "Allowed ports for this domain"
+          },
+          "description": {
+            "type": "string",
+            "description": "Human-readable description"
+          }
+        }
+      }
+    },
+    "dns_servers": {
+      "type": "array",
+      "description": "List of trusted DNS resolver IP addresses",
+      "items": {
+        "type": "string",
+        "pattern": "^(\\d{1,3}\\.){3}\\d{1,3}$"
+      }
+    },
+    "metadata": {
+      "type": "object",
+      "properties": {
+        "last_updated": {
+          "type": "string",
+          "format": "date"
+        },
+        "version": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

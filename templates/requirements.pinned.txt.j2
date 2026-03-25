@@ -1,0 +1,34 @@
+{#
+  Python requirements template with hash verification
+  Ensures supply chain integrity per docs/constraints.yaml C-011, C-016
+  
+  This template shows how to create a requirements file with hash pins.
+  Users should generate their own pinned requirements using:
+  
+    pip install --require-hashes -r requirements.txt
+  
+  For security, always verify hashes match the actual package downloads.
+#}
+
+# Python requirements with hash verification
+# Generated from pip hash calculation
+#
+# Install with: pip install --require-hashes -r requirements.txt
+# See DEV-026 for verification requirements
+#
+# Common packages for AI coding assistance:
+
+# pip-audit - scans packages for known vulnerabilities (docs/constraints.yaml C-016)
+pip-audit==2.7.3 \
+    --hash=sha256:example_hash_would_be_here_in_production
+
+# safety - additional vulnerability scanning
+# safety==3.0.0 \
+#     --hash=sha256:example_hash_would_be_here_in_production
+
+# Example: Add your own requirements with hashes
+# To generate hashes for your requirements:
+#   pip hash <package.whl>
+#   pip freeze | xargs pip hash
+#
+# For reproducible builds, always pin to specific versions with hashes

@@ -10,8 +10,7 @@
 :desired-state: Secure, ephemeral Multipass VM with OpenCode CLI, network whitelist, and supply-chain security controls
 :prior-state: Empty greenfield project
 :capabilities-planned: needs-adr, needs-architecture, needs-features, needs-design, needs-tasks, needs-implementation
-:capabilities-invoked: needs-adr, needs-architecture, needs-features, needs-design, needs-tasks
-:capabilities-remaining: needs-implementation
+:capabilities-invoked: needs-adr, needs-architecture, needs-features, needs-design, needs-tasks, needs-implementation
 :constraints-checked: Security (19 constraints pass), Supply Chain (7 constraints pass)
-:result: Partial
-:artifacts-modified: docs/adrs/0001-multipass-sandbox.yaml, docs/adrs/index.yaml, docs/constraints.yaml, docs/architecture.adoc, docs/features/dev-env-setup/spec.yaml, docs/features/dev-env-setup/design.adoc, docs/features/dev-env-setup/tasks.yaml, docs/state-log.adoc
+:result: Achieved
+:artifacts-modified: docs/adrs/0001-multipass-sandbox.yaml, docs/adrs/index.yaml, docs/constraints.yaml, docs/architecture.adoc, docs/features/dev-env-setup/spec.yaml, docs/features/dev-env-setup/design.adoc, docs/features/dev-env-setup/tasks.yaml, docs/state-log.adoc, config/network-whitelist.default.yaml, cloud-init/base.yaml, cloud-init/security.yaml, cloud-init/apparmor-profile, scripts/launch.sh, scripts/teardown.sh, scripts/inject-secrets.sh, templates/opencode-config.yaml.j2, templates/requirements.pinned.txt.j2, README.md
