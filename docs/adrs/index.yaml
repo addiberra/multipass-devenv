@@ -1,0 +1,12 @@
+# yaml-language-server: $schema=../../skills/needs-adr/schemas/adr-index.schema.json
+
+schema_version: "1.0.0"
+version: "1.0.0"
+last_updated: "2026-03-25"
+
+decisions:
+  - id: ADR-0001
+    title: Use Multipass VM for Secure Agentic AI Development Environment
+    status: Accepted
+    date: "2026-03-25"
+    file: 0001-multipass-sandbox.yaml

@@ -1,0 +1,356 @@
+# yaml-language-server: $schema=../../../.agents/skills/needs-features/schemas/feature-spec.schema.json
+
+schema_version: "1.0.0"
+feature: dev-env-setup
+prefix: DEV
+version: "1.0.0"
+last_updated: "2026-03-25"
+
+constraint_notes:
+  - constraint: "The system SHALL NOT mount host directories into the VM."
+    category: Security
+    note: >-
+      C-001 enforces no host mounts. The feature assumes repo cloning
+      inside the VM, not mounting from host.
+
+  - constraint: "The system SHALL block all network egress except whitelisted domains."
+    category: Security
+    note: >-
+      C-002 provides network filtering. Requirements specify the allowed
+      endpoints and how custom whitelists work.
+
+  - constraint: "The system SHALL inject secrets via cloud-init, not environment variables."
+    category: Security
+    note: >-
+      C-003 mandates the mechanism. Requirements specify how secrets
+      are provided by the developer and validated.
+
+  - constraint: "The system SHALL destroy the VM after session completion."
+    category: Security
+    note: >-
+      C-006 enforces ephemeral lifecycle. Requirements specify the
+      teardown workflow.
+
+stories:
+  - id: US-001
+    title: Launch Secure Dev Environment
+    narrative:
+      as_a: developer
+      i_want: to spin up a secure development VM quickly
+      so_that: I can start coding with AI assistance without manual setup
+    requirements:
+      - id: DEV-001
+        text: >-
+          When the launch script is invoked, the system shall launch a fresh
+          Multipass VM with Ubuntu 24.04 LTS.
+        ears_type: event-driven
+        verification: >-
+          Run `./scripts/launch.sh --repo <url> --secrets <file>`.
+          Confirm that a new Multipass VM instance is created with Ubuntu 24.04 LTS.
+
+      - id: DEV-002
+        text: >-
+          When the VM initializes, the system shall create a non-root user
+          named "opencode" for agent execution.
+        ears_type: event-driven
+        verification: >-
+          After VM launch, run `multipass shell <name>` and execute `whoami`.
+          Confirm the default user is "opencode", not root.
+
+      - id: DEV-003
+        text: >-
+          When the --dry-run flag is provided, the system shall display
+          the configuration that would be applied without creating a VM.
+        ears_type: event-driven
+        verification: >-
+          Run `./scripts/launch.sh --dry-run --repo <url> --secrets <file>`.
+          Confirm output shows VM configuration without creating an instance.
+          Run `multipass list` to verify no new VM was created.
+
+      - id: DEV-004
+        text: >-
+          If the --secrets file is missing or unreadable, the system shall
+          display an error and abort the launch.
+        ears_type: unwanted-behavior
+        verification: >-
+          Run `./scripts/launch.sh --repo <url> --secrets nonexistent.env`.
+          Confirm an error message is displayed and no VM is created.
+
+  - id: US-002
+    title: Configure OpenCode with Secrets
+    narrative:
+      as_a: developer
+      i_want: OpenCode CLI preconfigured with my API keys
+      so_that: I can start using AI coding assistance immediately
+    requirements:
+      - id: DEV-005
+        text: >-
+          The system shall install OpenCode CLI from the official source
+          during VM initialization.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, run `multipass shell <name>` and execute
+          `opencode --version`. Confirm OpenCode CLI is installed and
+          reports a valid version.
+
+      - id: DEV-006
+        text: >-
+          The system shall verify the OpenCode CLI checksum against
+          the expected hash before installation.
+        ears_type: ubiquitous
+        verification: >-
+          Review the cloud-init log via `multipass shell <name>` and
+          check `/var/log/cloud-init-output.log`. Confirm checksum
+          verification passed before installation.
+
+      - id: DEV-007
+        text: >-
+          When secrets are provided via the --secrets file, the system
+          shall inject them into the OpenCode configuration.
+        ears_type: event-driven
+        verification: >-
+          Provide a secrets file with API keys. After VM launch, run
+          `multipass shell <name>` and check `/home/opencode/.config/opencode/`.
+          Confirm secrets are present in the configuration.
+
+      - id: DEV-008
+        text: >-
+          The system shall not inherit or expose host environment variables
+          in the VM.
+        ears_type: ubiquitous
+        verification: >-
+          Set a test environment variable on the host (e.g., TEST_SECRET=exposed).
+          Launch the VM. Inside the VM, run `env | grep TEST_SECRET`.
+          Confirm no output (variable not present).
+
+  - id: US-003
+    title: Work on Git Repositories
+    narrative:
+      as_a: developer
+      i_want: to clone and work on my repositories inside the VM
+      so_that: the AI agent has isolated access without host filesystem exposure
+    requirements:
+      - id: DEV-009
+        text: >-
+          When the --repo argument is provided with a git URL, the system
+          shall clone the repository inside the VM workspace.
+        ears_type: event-driven
+        verification: >-
+          Run `./scripts/launch.sh --repo https://github.com/example/repo.git --secrets <file>`.
+          After launch, run `multipass shell <name>` and navigate to
+          `/home/opencode/workspace/`. Confirm the repository was cloned.
+
+      - id: DEV-010
+        text: >-
+          The system shall pre-seed SSH host keys for GitHub and GitLab
+          to enable secure cloning without manual verification.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, run `multipass shell <name>` and execute
+          `ssh -T git@github.com` and `ssh -T git@gitlab.com`.
+          Confirm no host key verification prompt appears.
+
+      - id: DEV-011
+        text: >-
+          When git configuration is provided in the secrets file, the system
+          shall configure git with the user name and email from that file.
+        ears_type: event-driven
+        verification: >-
+          Provide git credentials in the secrets file. After VM launch,
+          run `multipass shell <name>` and execute `git config --global user.name`
+          and `git config --global user.email`. Confirm values match
+          the secrets file.
+
+  - id: US-004
+    title: Restrict Network Access
+    narrative:
+      as_a: developer
+      i_want: network access limited to essential endpoints
+      so_that: compromised agents cannot exfiltrate data or establish remote shells
+    requirements:
+      - id: DEV-012
+        text: >-
+          The system shall block all outbound network connections except
+          to whitelisted domains and ports.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, run `multipass shell <name>` and attempt
+          `curl https://example.com` (not in whitelist). Confirm the
+          connection is blocked. Then try `curl https://github.com`
+          (in whitelist). Confirm the connection succeeds.
+
+      - id: DEV-013
+        text: >-
+          The system shall allow outbound connections to GitHub and GitLab
+          on ports 22 (SSH) and 443 (HTTPS).
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, test cloning via SSH and HTTPS from GitHub
+          and GitLab. Confirm both succeed.
+
+      - id: DEV-014
+        text: >-
+          The system shall allow outbound connections to OpenAI API
+          and OpenCode API endpoints on port 443.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch with valid API keys, run `opencode` and initiate
+          a request. Confirm the API call succeeds without network errors.
+
+      - id: DEV-015
+        text: >-
+          The system shall allow outbound connections to package registries
+          (PyPI, npm, crates.io) on port 443.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, run `pip install <small-package>` and
+          `npm install <small-package>`. Confirm package installation succeeds.
+
+      - id: DEV-016
+        text: >-
+          When a custom network whitelist is provided via --network, the
+          system shall apply those rules instead of the default.
+        ears_type: event-driven
+        verification: >-
+          Create a custom whitelist allowing only github.com. Run
+          `./scripts/launch.sh --network custom-whitelist.yaml ...`.
+          Attempt to connect to api.openai.com. Confirm the connection
+          is blocked.
+
+      - id: DEV-017
+        text: >-
+          If network rules cannot be applied during initialization, the
+          system shall abort the launch and display an error.
+        ears_type: unwanted-behavior
+        verification: >-
+          Provide a malformed network whitelist YAML file. Run
+          `./scripts/launch.sh --network malformed.yaml ...`.
+          Confirm an error is displayed and VM creation is aborted.
+
+  - id: US-005
+    title: Maintain Filesystem Isolation
+    narrative:
+      as_a: developer
+      i_want: file writes restricted to the workspace directory
+      so_that: compromised agents cannot modify system files or establish persistence
+    requirements:
+      - id: DEV-018
+        text: >-
+          The system shall enforce AppArmor rules that restrict write
+          operations to /home/opencode/workspace/ and its subdirectories.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, run `multipass shell <name>` and attempt
+          `touch /tmp/test-write`. Confirm permission denied.
+          Then try `touch /home/opencode/workspace/test-write`.
+          Confirm the file is created successfully.
+
+      - id: DEV-019
+        text: >-
+          The system shall prevent write access to OpenCode configuration
+          files after initial setup.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, run `multipass shell <name>` and attempt
+          `echo 'malicious' >> /home/opencode/.config/opencode/config.yaml`.
+          Confirm permission denied.
+
+      - id: DEV-020
+        text: >-
+          If AppArmor profile cannot be loaded during initialization,
+          the system shall abort the launch and display an error.
+        ears_type: unwanted-behavior
+        verification: >-
+          Simulate AppArmor failure by providing an invalid profile
+          (requires integration test). Confirm VM creation is aborted
+          with appropriate error message.
+
+  - id: US-006
+    title: Destroy Environment After Use
+    narrative:
+      as_a: developer
+      i_want: all traces of my session removed when done
+      so_that: secrets and artifacts don't accumulate or leak
+    requirements:
+      - id: DEV-021
+        text: >-
+          When the teardown script is invoked, the system shall destroy
+          the Multipass VM and all its data.
+        ears_type: event-driven
+        verification: >-
+          After a session, run `./scripts/teardown.sh --name <name>`.
+          Run `multipass list` and confirm the VM no longer exists.
+
+      - id: DEV-022
+        text: >-
+          The teardown script shall require explicit confirmation before
+          destroying a VM.
+        ears_type: ubiquitous
+        verification: >-
+          Run `./scripts/teardown.sh --name <name>` without flags.
+          Confirm a confirmation prompt appears. Cancel the operation.
+          Confirm the VM still exists.
+
+      - id: DEV-023
+        text: >-
+          When the --force flag is provided to teardown, the system shall
+          destroy the VM without prompting for confirmation.
+        ears_type: event-driven
+        verification: >-
+          Run `./scripts/teardown.sh --name <name> --force`.
+          Confirm the VM is destroyed immediately without a prompt.
+
+      - id: DEV-024
+        text: >-
+          If the specified VM name does not exist, the teardown script
+          shall display an error and exit without action.
+        ears_type: unwanted-behavior
+        verification: >-
+          Run `./scripts/teardown.sh --name nonexistent-vm`.
+          Confirm an error message is displayed and no VMs are affected.
+
+  - id: US-007
+    title: Verify Supply Chain Integrity
+    narrative:
+      as_a: developer
+      i_want: all installed software verified for integrity
+      so_that: I can trust the development environment hasn't been tampered with
+    requirements:
+      - id: DEV-025
+        text: >-
+          The system shall install apt packages only from official
+          Ubuntu repositories.
+        ears_type: ubiquitous
+        verification: >-
+          After VM launch, run `multipass shell <name>` and execute
+          `cat /etc/apt/sources.list`. Confirm only official Ubuntu
+          repositories are listed (no PPAs).
+
+      - id: DEV-026
+        text: >-
+          When a requirements file with hashes is provided, the system shall
+          verify Python package hashes during installation.
+        ears_type: event-driven
+        verification: >-
+          Provide a requirements file with hash pins. After VM launch,
+          check the pip installation log. Confirm hash verification
+          was performed for each package.
+
+      - id: DEV-027
+        text: >-
+          The system shall install OpenCode CLI only after verifying
+          the SHA256 checksum matches the expected value.
+        ears_type: ubiquitous
+        verification: >-
+          Review the cloud-init log. Confirm the checksum verification step
+          passed before OpenCode was moved to /usr/local/bin/.
+
+      - id: DEV-028
+        text: >-
+          If OpenCode checksum verification fails, the system shall
+          abort VM initialization and display an error.
+        ears_type: unwanted-behavior
+        verification: >-
+          Simulate checksum mismatch by modifying the download URL or
+          checksum in cloud-init (requires integration test). Confirm
+          VM initialization aborts with appropriate error.

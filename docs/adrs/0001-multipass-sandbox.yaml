@@ -1,0 +1,73 @@
+# yaml-language-server: $schema=../schemas/adr.schema.json
+
+schema_version: "1.0.0"
+id: ADR-0001
+title: Use Multipass VM for Secure Agentic AI Development Environment
+status: Accepted
+date: "2026-03-25"
+deciders: Project maintainers
+
+context: >-
+  Agentic AI coding tools (like OpenCode) execute arbitrary code by design, creating
+  significant security risks through indirect prompt injection and other attack vectors.
+  The NVIDIA AI Red Team recommends mandatory controls including network egress
+  restrictions, file write restrictions outside workspace, and blocking writes to
+  configuration files. They further recommend full VM isolation (kernel separation),
+  secret injection instead of environment variable inheritance, and lifecycle management
+  to prevent accumulation of secrets and intellectual property.
+
+decision: >-
+  Use Multipass to create ephemeral Ubuntu VMs with complete kernel isolation from the
+  host. The VM will be configured with:
+  
+  1. Network egress restricted to whitelisted domains via iptables (GitHub/GitLab,
+     OpenAI API, OpenCode API, package registries)
+  2. File writes blocked outside /home/ubuntu/workspace via AppArmor
+  3. OpenCode configuration files made immutable
+  4. No host directory mounts - repos cloned inside VM
+  5. Secret injection via cloud-init write_files, not host env vars
+  6. SSH disabled - access only via multipass shell
+  7. Non-root 'opencode' user for agent execution
+  8. Fresh Ubuntu image each session for latest security patches
+  9. VM destroyed after session to prevent accumulation
+
+consequences:
+  easier:
+    - Complete isolation from host filesystem and credentials
+    - Kernel-level security boundaries (full virtualization)
+    - Automatic cleanup of all artifacts on teardown
+    - Latest security patches with fresh Ubuntu instances
+    - Reproducible development environments
+  harder:
+    - Slightly longer VM startup time vs container-based approaches
+    - Network configuration requires iptables knowledge
+    - No SSH access means only multipass shell for interaction
+    - Secrets must be explicitly provided for each session
+
+alternatives:
+  - name: Docker containers with security profiles
+    reason_rejected: >-
+      Docker shares the host kernel, leaving it vulnerable to kernel exploits
+      from arbitrary code execution. NVIDIA specifically recommends full
+      virtualization over container solutions for agentic workloads.
+
+  - name: macOS Seatbelt sandbox
+    reason_rejected: >-
+      Seatbelt provides application-level sandboxing but still shares the
+      host kernel. Additionally, it's macOS-specific and doesn't provide
+      the same level of network egress controls or lifecycle management.
+
+  - name: Kata containers
+    reason_rejected: >-
+      Kata provides better isolation than Docker but requires additional
+      infrastructure. Multipass provides a simpler workflow specifically
+      designed for development environments with cloud-init customization.
+
+  - name: Remote development environment (cloud VM)
+    reason_rejected: >-
+      Cloud VMs provide isolation but lack the quick spin-up/spin-down workflow
+      needed for ephemeral development sessions. They also require network
+      access to the cloud provider, adding another attack surface.
+
+references:
+  - https://developer.nvidia.com/blog/practical-security-guidance-for-sandboxing-agentic-workflows-and-managing-execution-risk/

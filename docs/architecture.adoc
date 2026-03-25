@@ -1,0 +1,322 @@
+= System Architecture
+:version: 1.0.0
+:last-updated: 2026-03-25
+:toc:
+
+== Feature Design Sources
+
+[cols="1,1", options="header"]
+|===
+| Feature | Design Version
+
+| dev-env-setup | (pending)
+|===
+
+== Overview
+
+Secure Multipass development environment for agentic AI coding tools. Provides kernel-level isolation between the host and agent execution environment through full virtualization. The system creates ephemeral Ubuntu VMs with strict network and filesystem controls, injects only necessary secrets, and destroys all artifacts after session completion.
+
+Key design principles from NVIDIA AI Red Team guidance:
+
+* **Kernel isolation**: Full VM virtualization (not containers) separates agent execution from host kernel
+* **Network egress controls**: iptables whitelist restricts outbound traffic to essential endpoints
+* **Filesystem isolation**: AppArmor confines writes to designated workspace
+* **Secret injection**: Credentials injected via cloud-init, not inherited from host environment
+* **Ephemeral lifecycle**: VM destroyed after session to prevent accumulation of secrets/IP
+
+== System Context (C4 Level 1)
+
+[source,mermaid]
+----
+C4Context
+  title System Context - Multipass Dev Environment
+
+  Person(developer, "Developer", "Runs agentic AI coding tools in isolated environment")
+  Person(agent, "AI Agent", "Executes code, modifies files, makes network requests")
+  System_Ext(gitproviders, "Git Providers", "GitHub, GitLab - repositories")
+  System_Ext(llmapis, "LLM APIs", "OpenAI, OpenCode - AI model access")
+  System_Ext(registries, "Package Registries", "PyPI, npm, crates.io - dependencies")
+  System(multipass, "Multipass Dev Environment", "Ephemeral VM with security hardening")
+
+  Rel(developer, multipass, "Launches/teardown VM", "multipass shell")
+  Rel(developer, multipass, "Provide secrets", ".env file")
+  Rel(agent, multipass, "Runs inside", "isolated")
+  Rel(multipass, gitproviders, "Clone repos", "SSH/HTTPS")
+  Rel(multipass, llmapis, "Generate code", "HTTPS")
+  Rel(multipass, registries, "Install deps", "HTTPS")
+----
+
+The developer uses launch scripts to spin up an isolated VM, provides secrets via a file (not environment variables), and works inside via `multipass shell`. The AI agent runs inside the VM with restricted network access and filesystem confinement.
+
+== Container View (C4 Level 2)
+
+[source,mermaid]
+----
+C4Container
+  title Container Diagram - Multipass Dev Environment
+
+  Person(developer, "Developer", "Host machine user")
+
+  System_Boundary(host, "Host Machine") {
+    Container(launch_script, "launch.sh", "Bash", "Parses args, generates cloud-init, launches VM")
+    Container(teardown_script, "teardown.sh", "Bash", "Destroys VM and cleans artifacts")
+    Container(secrets_file, "secrets.env", "File", "Developer-provided API keys")
+  }
+
+  System_Boundary(vm, "Multipass VM") {
+    Container(ubuntu, "Ubuntu 24.04", "OS", "Fresh image, latest security patches")
+    Container(opencode_user, "opencode user", "User", "Non-root user for agent execution")
+    Container(opencode_cli, "OpenCode CLI", "Binary", "AI coding agent, runs as opencode user")
+    Container(workspace, "/home/opencode/workspace", "Directory", "Agent workspace, only writable location")
+    Container(iptables, "iptables rules", "Netfilter", "Network egress whitelist enforcement")
+    Container(apparmor, "AppArmor profile", "LSM", "Filesystem write restrictions")
+  }
+
+  System_Ext(gitproviders, "Git Providers", "GitHub, GitLab")
+  System_Ext(llmapis, "LLM APIs", "OpenAI, OpenCode")
+  System_Ext(registries, "Package Registries", "PyPI, npm")
+
+  Rel(developer, launch_script, "Runs")
+  Rel(launch_script, secrets_file, "Reads")
+  Rel(launch_script, ubuntu, "Launches via Multipass", "cloud-init")
+  Rel(ubuntu, opencode_user, "Creates user")
+  Rel(ubuntu, iptables, "Configures")
+  Rel(ubuntu, apparmor, "Loads")
+  Rel(opencode_user, opencode_cli, "Runs")
+  Rel(opencode_cli, workspace, "Writes")
+  Rel(opencode_cli, llmapis, "API calls", "HTTPS (whitelisted)")
+  Rel(opencode_cli, gitproviders, "Clone/push", "SSH/HTTPS (whitelisted)")
+  Rel(opencode_cli, registries, "Install packages", "HTTPS (whitelisted)")
+  Rel(developer, teardown_script, "Runs")
+  Rel(teardown_script, ubuntu, "Destroys VM")
+----
+
+The host contains only the launch/teardown scripts and the secrets file provided by the developer. The VM contains all runtime components: the OS, security controls (iptables, AppArmor), the non-root user, and the agent itself.
+
+== Component View (C4 Level 3)
+
+The VM container has meaningful internal structure: security layers, execution environment, and workspace.
+
+[source,mermaid]
+----
+C4Component
+  title Component Diagram - Multipass VM
+
+  Container_Boundary(vm, "Multipass VM") {
+    Component(cloud_init, "cloud-init", "Python", "VM initialization on first boot")
+    Component(sec_iptables, "iptables", "Netfilter", "Network packet filtering")
+    Component(sec_apparmor, "AppArmor", "LSM", "Mandatory access control")
+    Component(sec_dns, "DNS Resolver", "systemd-resolved", "Restricted to trusted resolvers")
+    Component(user_opencode, "opencode user", "Unix user", "Non-privileged execution context")
+    Component(tool_git, "git", "Binary", "Repository operations")
+    Component(tool_opencode, "OpenCode CLI", "Binary", "AI coding agent")
+    Component(tool_python, "Python", "Binary", "Script execution")
+    Component(tool_nodejs, "Node.js", "Binary", "JavaScript runtime")
+    Component(dir_workspace, "workspace/", "Directory", "/home/opencode/workspace - writable area")
+    Component(dir_home, "opencode home", "Directory", "/home/opencode - read-only except workspace")
+  }
+
+  System_Ext(gitproviders, "Git Providers")
+  System_Ext(llmapis, "LLM APIs")
+  System_Ext(registries, "Registries")
+
+  Rel(cloud_init, sec_iptables, "Configures")
+  Rel(cloud_init, sec_apparmor, "Loads profile")
+  Rel(cloud_init, user_opencode, "Creates user")
+  Rel(cloud_init, tool_opencode, "Installs (checksum verified)")
+  Rel(cloud_init, tool_git, "Installs from Ubuntu repos")
+  Rel(cloud_init, tool_python, "Installs from Ubuntu repos")
+  Rel(cloud_init, tool_nodejs, "Installs from Ubuntu repos")
+  Rel(cloud_init, dir_workspace, "Creates with permissions")
+
+  Rel(sec_iptables, gitproviders, "Allows SSH/HTTPS")
+  Rel(sec_iptables, llmapis, "Allows HTTPS")
+  Rel(sec_iptables, registries, "Allows HTTPS")
+  Rel(sec_iptables, sec_dns, "Uses for resolution")
+
+  Rel(sec_apparmor, dir_workspace, "Allows writes")
+  Rel(sec_apparmor, dir_home, "Blocks writes elsewhere")
+
+  Rel(user_opencode, tool_opencode, "Executes")
+  Rel(user_opencode, tool_git, "Executes")
+  Rel(user_opencode, tool_python, "Executes")
+  Rel(user_opencode, tool_nodejs, "Executes")
+  Rel(tool_opencode, dir_workspace, "Writes files")
+  Rel(tool_opencode, llmapis, "Makes requests")
+  Rel(tool_git, gitproviders, "Clone/push")
+----
+
+Security layers are applied during initialization via cloud-init. The agent runs as a non-root user with restricted capabilities.
+
+== Deployment View (C4 Level 4)
+
+[source,mermaid]
+----
+C4Deployment
+  title Deployment Diagram - Multipass Dev Environment
+
+  Deployment_Node(host_os, "Host OS", "macOS/Linux/Windows") {
+    Deployment_Node(multipassd, "Multipass Daemon", "Multipass") {
+      Deployment_Node(vm_instance, "multipass VM", "qemu/HyperKit/Hyper-V") {
+        Container(ubuntu, "Ubuntu 24.04", "VM", "Isolated kernel")
+      }
+    }
+    Deployment_Node(launch_script, "launch.sh", "Bash")
+    Deployment_Node(teardown_script, "teardown.sh", "Bash")
+  }
+
+  Deployment_Node(github, "github.com", "Internet")
+  Deployment_Node(openai_api, "api.openai.com", "Internet")
+  Deployment_Node(pypi, "pypi.org", "Internet")
+
+  Rel(launch_script, multipassd, "multipass launch")
+  Rel(ubuntu, github, "SSH/443", "whitelisted")
+  Rel(ubuntu, openai_api, "443", "whitelisted")
+  Rel(ubuntu, pypi, "443", "whitelisted")
+  Rel(teardown_script, multipassd, "multipass delete")
+----
+
+The VM runs as a full virtualization layer (QEMU on macOS/Linux, Hyper-V on Windows), providing kernel isolation from the host.
+
+== Technology Stack
+
+[cols="1,2,3", options="header"]
+|===
+| Category | Technology | Rationale
+
+| Virtualization
+| Multipass
+| ADR-0001: Kernel-isolated VMs for agentic AI security
+
+| Base Image
+| Ubuntu 24.04 LTS
+| Latest security patches, cloud-init support
+
+| Network Firewall
+| iptables/nftables
+| Default-deny network egress, whitelist exceptions
+
+| Filesystem Protection
+| AppArmor
+| OS-level confinement for file writes
+
+| Agent
+| OpenCode CLI
+| Latest stable release, checksum verified
+
+| Version Control
+| git
+| Repository operations, Ubuntu package
+
+| Secrets
+| cloud-init write_files
+| Injected at boot, not inherited from host
+|===
+
+* ADR-0001: Use Multipass VM for Secure Agentic AI Development Environment -- see docs/adrs/0001-multipass-sandbox.yaml
+
+== Security Architecture
+
+=== Network Egress Controls
+
+iptables configured with default-deny policy. Only explicitly whitelisted domains/ports permitted:
+
+[cols="1,1,1", options="header"]
+|===
+| Domain | Ports | Purpose
+
+| github.com
+| 22, 443
+| Git SSH/HTTPS operations
+
+| gitlab.com
+| 22, 443
+| Git SSH/HTTPS operations
+
+| api.openai.com
+| 443
+| OpenAI API
+
+| api.opencode.ai
+| 443
+| OpenCode API
+
+| pypi.org
+| 443
+| Python packages
+
+| registry.npmjs.org
+| 443
+| npm packages
+
+| crates.io
+| 443
+| Rust crates
+|===
+
+DNS resolution restricted to trusted resolvers (8.8.8.8, 1.1.1.1).
+
+=== Filesystem Isolation
+
+AppArmor profile restricts write operations:
+
+[cols="2,1", options="header"]
+|===
+| Path | Permission
+
+| /home/opencode/workspace/** 
+| rw (read/write)
+
+| /home/opencode/.config/opencode/
+| r (read only, secrets injected)
+
+| /home/opencode/
+| r (read only)
+
+| /
+| deny
+|===
+
+=== Secret Injection Flow
+
+1. Developer provides secrets file (not env vars, not mounted host files)
+2. launch.sh reads secrets and passes to cloud-init
+3. cloud-init write_files places secrets in VM during boot
+4. Secrets live only in VM memory/filesystem
+5. teardown.sh destroys VM, secrets destroyed with it
+
+No host filesystem mounts, no environment variable inheritance.
+
+=== Lifecycle Management
+
+Ephemeral by design:
+
+1. Launch: Fresh Ubuntu image each session
+2. Provision: cloud-init applies security controls, installs tools
+3. Work: Developer uses `multipass shell` to interact
+4. Teardown: VM destroyed, all artifacts deleted
+
+No persistent state accumulation across sessions.
+
+== Cross-Cutting Concerns
+
+=== Error Handling
+
+* Network connection failures: Clear error messages when whitelisted endpoints unreachable
+* Invalid secrets file: Validation before VM launch
+*VM launch failures: Multipass error passthrough to developer
+* Checksum verification failures: Abort OpenCode installation
+
+=== Supply Chain Security
+
+* All apt packages from official Ubuntu repositories only
+* OpenCode downloaded from official source with SHA256 verification
+* Python packages with hash verification
+* npm packages with integrity verification
+* All dependencies pinned to specific versions
+
+=== Observability
+
+* Multipass logs available via `multipass logs <instance>`
+* VM console output during provisioning
+* No persistent logging by design (ephemeral lifecycle)

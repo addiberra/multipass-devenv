@@ -1,0 +1,196 @@
+# yaml-language-server: $schema=../.agents/skills/proven-needs/schemas/constraints.schema.json
+
+schema_version: "1.0.0"
+version: "1.0.0"
+last_updated: "2026-03-25"
+
+categories:
+  - name: Security
+    constraints:
+      - id: C-001
+        text: >-
+          The system SHALL NOT mount host directories into the VM.
+        rationale: >-
+          Host directory mounts create an exfiltration path for secrets
+          stored on the host (e.g., ~/.ssh, ~/.aws). Complete isolation
+          prevents compromised agents from accessing host credentials.
+        added: "2026-03-25"
+
+      - id: C-002
+        text: >-
+          The system SHALL block all network egress except whitelisted domains.
+        rationale: >-
+          Default-deny network policy prevents data exfiltration and remote
+          shell establishment by compromised agents. Only essential endpoints
+          (Git providers, LLM APIs, package registries) are permitted.
+        added: "2026-03-25"
+
+      - id: C-003
+        text: >-
+          The system SHALL inject secrets via cloud-init write_files,
+          not environment variables or host mounts.
+        rationale: >-
+          Environment variables are visible to all processes in the VM.
+          Secrets injected via cloud-init exist only in the VM and are
+          destroyed with it. This follows NVIDIA's secret injection guidance.
+        added: "2026-03-25"
+
+      - id: C-004
+        text: >-
+          The system SHALL disable SSH access to the VM.
+        rationale: >-
+          SSH access would require key management and creates an attack
+          surface. Access only via 'multipass shell' ensures the host
+          controls all entry points.
+        added: "2026-03-25"
+
+      - id: C-005
+        text: >-
+          The system SHALL run OpenCode as a non-root user.
+        rationale: >-
+          Running agents as non-root limits the damage from compromised
+          code execution. Root access would allow bypassing AppArmor
+          profiles and other security controls.
+        added: "2026-03-25"
+
+      - id: C-006
+        text: >-
+          The system SHALL destroy the VM after session completion.
+        rationale: >-
+          Ephemeral lifecycle prevents accumulation of secrets,
+          intellectual property, and exploitable code artifacts.
+          NVIDIA recommends lifecycle management as a core control.
+        added: "2026-03-25"
+
+  - name: Isolation
+    constraints:
+      - id: C-007
+        text: >-
+          The system SHALL prevent file writes outside /home/ubuntu/workspace.
+        rationale: >-
+          Restricting write operations to the workspace prevents modification
+          of system files, user dotfiles, and configuration that could
+          establish persistence or escape the sandbox.
+        added: "2026-03-25"
+
+      - id: C-008
+        text: >-
+          The system SHALL NOT expose host credentials to the VM.
+        rationale: >-
+          Host credentials (SSH keys, API tokens in ~/.config) are not
+          needed inside the VM. Scoping credentials to only what's
+          required for the session limits blast radius.
+        added: "2026-03-25"
+
+      - id: C-009
+        text: >-
+          The system SHALL use AppArmor or equivalent to enforce
+          filesystem restrictions.
+        rationale: >-
+          Application-level controls are insufficient for agentic tools
+          that execute arbitrary code. OS-level enforcement via AppArmor
+          provides kernel-backed security boundaries.
+        added: "2026-03-25"
+
+  - name: Supply Chain
+    constraints:
+      - id: C-010
+        text: >-
+          All apt packages SHALL be installed from official Ubuntu
+          repositories only.
+        rationale: >-
+          Official Ubuntu repositories are signed and verified. Adding
+          third-party PPAs introduces untrusted code paths and increases
+          supply chain attack surface.
+        added: "2026-03-25"
+
+      - id: C-011
+        text: >-
+          All Python packages SHALL be installed with hash verification
+          or from verified requirement files.
+        rationale: >-
+          pip install without hash verification allows MITM attacks
+          that could inject malicious code. Hash-pinned requirements
+          provide cryptographic integrity verification.
+        added: "2026-03-25"
+
+      - id: C-012
+        text: >-
+          All npm packages SHALL be installed with integrity verification.
+        rationale: >-
+          npm package integrity verification (package-lock.json with
+          integrity hashes) ensures packages haven't been tampered
+          with in transit or at rest on the registry.
+        added: "2026-03-25"
+
+      - id: C-013
+        text: >-
+          OpenCode CLI SHALL be downloaded from official source only
+          with checksum verification.
+        rationale: >-
+          Installing OpenCode from unofficial sources or without
+          checksum verification allows attackers to substitute
+          malicious binaries. Checksum verification ensures authenticity.
+        added: "2026-03-25"
+
+      - id: C-014
+        text: >-
+          All dependencies SHALL be pinned to specific versions,
+          never using 'latest' tag or floating version specifiers.
+        rationale: >-
+          Floating versions introduce non-determinism and allow
+          supply chain attacks when dependencies are compromised.
+          Pinned versions ensure reproducible builds and allow
+          vulnerability auditing.
+        added: "2026-03-25"
+
+      - id: C-015
+        text: >-
+          Git clone operations SHALL verify SSH host keys or HTTPS
+          certificates.
+        rationale: >-
+          Unverified git clones are vulnerable to MITM attacks that
+          could inject malicious code. Pre-seeding SSH host keys
+          and enforcing HTTPS certificate verification prevents this.
+        added: "2026-03-25"
+
+      - id: C-016
+        text: >-
+          Python dependencies SHALL be scanned for known vulnerabilities
+          using pip-audit or similar tools.
+        rationale: >-
+          Known vulnerabilities in dependencies are a common attack
+          vector. Automated scanning during VM setup catches issues
+          before they can be exploited.
+        added: "2026-03-25"
+
+  - name: Network
+    constraints:
+      - id: C-017
+        text: >-
+          DNS resolution SHALL be restricted to trusted resolvers only.
+        rationale: >-
+          Unrestricted DNS allows DNS-based data exfiltration.
+          Restricting to trusted resolvers (e.g., 8.8.8.8, 1.1.1.1)
+          prevents this attack vector.
+        added: "2026-03-25"
+
+      - id: C-018
+        text: >-
+          Network whitelist SHALL be configurable per project with
+          a secure default.
+        rationale: >-
+          Different projects may require different network access
+          (e.g., specific internal APIs). A configurable whitelist
+          allows flexibility while maintaining security by default.
+        added: "2026-03-25"
+
+      - id: C-019
+        text: >-
+          The default network whitelist SHALL allow only Git providers,
+          LLM APIs, and package registries.
+        rationale: >-
+          Default-deny with minimal allowlist follows the principle
+          of least privilege. Any additional access must be explicitly
+          configured by the user.
+        added: "2026-03-25"

@@ -1,0 +1,17 @@
+= State Transition Log
+:last-updated: 2026-03-25
+
+== TRANSITION-001
+:date: 2026-03-25
+:intent: Create secure Multipass dev environment config for agentic AI coding
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (new)
+:desired-state: Secure, ephemeral Multipass VM with OpenCode CLI, network whitelist, and supply-chain security controls
+:prior-state: Empty greenfield project
+:capabilities-planned: needs-adr, needs-architecture, needs-features, needs-design, needs-tasks, needs-implementation
+:capabilities-invoked: needs-adr, needs-architecture, needs-features, needs-design, needs-tasks
+:capabilities-remaining: needs-implementation
+:constraints-checked: Security (19 constraints pass), Supply Chain (7 constraints pass)
+:result: Partial
+:artifacts-modified: docs/adrs/0001-multipass-sandbox.yaml, docs/adrs/index.yaml, docs/constraints.yaml, docs/architecture.adoc, docs/features/dev-env-setup/spec.yaml, docs/features/dev-env-setup/design.adoc, docs/features/dev-env-setup/tasks.yaml, docs/state-log.adoc
