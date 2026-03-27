@@ -3,7 +3,7 @@
 # Launch script for secure dev environment
 # Orchestrates VM creation with Multipass and cloud-init
 #
-# See docs/features/dev-env-setup/spec.yaml US-001, US-002, US-003, US-004
+# See docs/features/dev-env-setup/spec.yaml US-001, US-002, US-003, US-004, US-005
 # See docs/constraints.yaml C-001-C-019
 #
 # Usage:
@@ -62,7 +62,6 @@ Security notes:
   - Secrets are injected via cloud-init, not environment variables
   - SSH access is disabled; use 'multipass shell <name>' instead
   - Network egress is restricted to whitelisted domains only
-  - File writes are confined to /home/opencode/workspace/
 EOF
 }
 
@@ -114,7 +113,7 @@ validate_secrets_file() {
     
     local line_num=0
     while IFS= read -r line || [[ -n "$line" ]]; do
-        ((line_num++))
+        ((line_num += 1))
         # Skip comments and empty lines
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "${line// }" ]] && continue
@@ -258,51 +257,6 @@ generate_cloud_init() {
     
     cloud_init+="\n"
     
-    # Add AppArmor profile
-    cloud_init+="  - path: /etc/apparmor.d/opencode-workspace\n"
-    cloud_init+="    owner: root:root\n"
-    cloud_init+="    permissions: '0644'\n"
-    cloud_init+="    content: |\n"
-    cloud_init+="      #include <tunables/global>\n\n"
-    cloud_init+="      profile opencode-workspace /home/opencode/.{,*/}bin/opencode flags=(attach_disconnected) {\n"
-    cloud_init+="        capability dac_override,\n"
-    cloud_init+="        capability dac_read_search,\n\n"
-    cloud_init+="        /usr/** r,\n"
-    cloud_init+="        /bin/** r,\n"
-    cloud_init+="        /lib/** r,\n"
-    cloud_init+="        /lib64/** r,\n"
-    cloud_init+="        /etc/** r,\n\n"
-    cloud_init+="        /home/opencode/workspace/** rw,\n"
-    cloud_init+="        /home/opencode/workspace/ rw,\n\n"
-    cloud_init+="        /home/opencode/.gitconfig rw,\n"
-    cloud_init+="        /home/opencode/.ssh/known_hosts rw,\n"
-    cloud_init+="        /home/opencode/.ssh/ r,\n"
-    cloud_init+="        /home/opencode/.config/opencode/ r,\n"
-    cloud_init+="        /home/opencode/.config/opencode/** r,\n\n"
-    cloud_init+="        /tmp/opencode-** rw,\n"
-    cloud_init+="        /tmp/** r,\n\n"
-    cloud_init+="        network inet tcp,\n"
-    cloud_init+="        network inet udp,\n"
-    cloud_init+="        network inet6 tcp,\n"
-    cloud_init+="        network inet6 udp,\n\n"
-    cloud_init+="        /home/opencode/.cache/pip/ rw,\n"
-    cloud_init+="        /home/opencode/.cache/pip/** rw,\n"
-    cloud_init+="        /home/opencode/.npm/ rw,\n"
-    cloud_init+="        /home/opencode/.npm/** rw,\n\n"
-    cloud_init+="        deny /home/opencode/.config/opencode/** w,\n"
-    cloud_init+="        deny /home/opencode/.ssh/id_* w,\n"
-    cloud_init+="        deny /root/** rw,\n"
-    cloud_init+="        deny /etc/ssh/** w,\n"
-    cloud_init+="        deny /**.ssh/** w,\n\n"
-    cloud_init+="        /var/lib/apt/lists/** r,\n"
-    cloud_init+="        /var/cache/apt/** r,\n\n"
-    cloud_init+="        /usr/bin/git PUx,\n"
-    cloud_init+="        /usr/bin/python* PUx,\n"
-    cloud_init+="        /usr/bin/node PUx,\n"
-    cloud_init+="        /usr/bin/npm PUx,\n\n"
-    cloud_init+="        /var/log/** w,\n"
-    cloud_init+="      }\n"
-    
     # Add runcmd for security setup
     cloud_init+="\nruncmd:\n"
     cloud_init+="  - echo 'Starting security configuration...'\n"
@@ -335,9 +289,6 @@ generate_cloud_init() {
     cloud_init+="  - systemctl stop sshd || true\n"
     cloud_init+="  - systemctl disable sshd || true\n"
     
-    # Load AppArmor profile
-    cloud_init+="  - apparmor_parser -r /etc/apparmor.d/opencode-workspace\n"
-    
     # Clone repository
     local repo_dir="/home/opencode/workspace/$(basename "$repo_url" .git 2>/dev/null || basename "$repo_url")"
     cloud_init+="  - cd /home/opencode/workspace && git clone \"$repo_url\" || echo 'Clone failed'\n"
@@ -363,7 +314,6 @@ generate_cloud_init() {
     
     # Verify setup
     cloud_init+="  - echo 'Security configuration complete'\n"
-    cloud_init+="  - apparmor_status\n"
     
     echo -e "$cloud_init"
 }
@@ -422,8 +372,6 @@ launch_vm() {
     log_info ""
     log_info "Access the VM with: multipass shell $name"
     log_info "Work directory: /home/opencode/workspace"
-    log_info ""
-    log_info "To delete: ./scripts/teardown.sh --name $name"
 }
 
 parse_args() {

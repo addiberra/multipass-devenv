@@ -169,7 +169,7 @@ validate_secrets() {
     local line_num=0
     
     while IFS= read -r line || [[ -n "$line" ]]; do
-        ((line_num++))
+        ((line_num += 1))
         
         # Skip comments and empty lines
         [[ "$line" =~ ^[[:space:]]*# ]] && continue

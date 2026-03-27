@@ -3,7 +3,7 @@
 # Installs packages and creates non-root user
 #
 # See docs/features/dev-env-setup/spec.yaml US-001, US-007
-# See docs/constraints.yaml C-005, C-010, C-025
+# See docs/constraints.yaml C-005, C-010-C-019
 #
 # This file is merged with security.yaml by launch.sh
 
@@ -32,10 +32,6 @@ packages:
   # Network firewall
   - iptables
   - iptables-persistent
-
-  # Security/AppArmor
-  - apparmor
-  - apparmor-utils
 
   # Additional utilities
   - jq

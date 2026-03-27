@@ -1,5 +1,33 @@
 = State Transition Log
-:last-updated: 2026-03-25
+:last-updated: 2026-03-27
+
+== TRANSITION-003
+:date: 2026-03-27
+:intent: Resolve review findings — enforce domain-level egress filtering, remove sudo, consume DNS config from whitelist, eliminate cloud-init duplication, fix constraint references, add shellcheck, clean up teardown references
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: Egress whitelist enforced at domain level via DNS resolution, opencode user has no sudo, DNS servers read from whitelist config, launch.sh reads actual YAML files instead of duplicating them, constraint cross-references are consistent, shellcheck validation exists, no stale teardown references remain
+:prior-state: Port-level egress only (any 22/443 destination reachable), opencode has NOPASSWD sudo, DNS hardcoded, generate_cloud_init duplicates security.yaml, inconsistent constraint refs
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked:
+:constraints-checked:
+:result: In Progress
+:artifacts-modified:
+
+== TRANSITION-002
+:date: 2026-03-27
+:intent: Simplify the dev environment by removing AppArmor and the teardown script
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: The project relies on Multipass VM isolation without AppArmor or a project-managed teardown workflow
+:prior-state: AppArmor-based filesystem confinement and teardown script were part of the documented and implemented model
+:capabilities-planned: needs-implementation, needs-architecture
+:capabilities-invoked: needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass), Network (pass)
+:result: Achieved
+:artifacts-modified: docs/constraints.yaml, docs/adrs/0001-multipass-sandbox.yaml, docs/architecture.adoc, docs/features/dev-env-setup/spec.yaml, docs/features/dev-env-setup/design.adoc, docs/features/dev-env-setup/tasks.yaml, docs/state-log.adoc, cloud-init/base.yaml, cloud-init/security.yaml, scripts/launch.sh, README.md
 
 == TRANSITION-001
 :date: 2026-03-25

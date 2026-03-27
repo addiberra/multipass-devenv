@@ -2,17 +2,16 @@
 
 schema_version: "3.0.0"
 feature: dev-env-setup
-version: "1.0.0"
+version: "1.1.0"
 status: Implemented
-source_design_version: "1.0.0"
-source_spec_version: "1.0.0"
-last_updated: "2026-03-25"
+source_design_version: "1.1.0"
+source_spec_version: "1.1.0"
+last_updated: "2026-03-27"
 
 overview: >-
-  Implementation plan for secure Multipass dev environment. 12 tasks organized
-  into foundation (config, templates) -> cloud-init -> scripts -> documentation.
-  Tasks form a DAG with explicit dependencies for parallel development where
-  possible.
+  Simplified implementation plan for the Multipass dev environment. The feature
+  now focuses on VM launch, secret injection, repo cloning, network controls,
+  and supply-chain safeguards using VM isolation and user-managed lifecycle.
 
 tasks:
   - id: TASK-001
@@ -23,10 +22,8 @@ tasks:
     requirements: [DEV-012, DEV-013, DEV-014, DEV-015]
     done: true
     description: >-
-      Create YAML configuration file defining default network egress whitelist.
-      Include GitHub/GitLab (ports 22, 443), OpenAI/OpenCode APIs (443),
-      and package registries PyPI/npm/crates.io (443). Include DNS resolver
-      configuration for trusted resolvers (8.8.8.8, 1.1.1.1).
+      Define the default egress allowlist for git providers, LLM APIs,
+      package registries, and trusted DNS resolvers.
 
   - id: TASK-002
     title: Create OpenCode config template
@@ -36,82 +33,44 @@ tasks:
     requirements: [DEV-007]
     done: true
     description: >-
-      Create Jinja2 template for OpenCode configuration file. Template
-      accepts secrets (OPENAI_API_KEY, OPENCODE_API_KEY, git user name/email)
-      and generates the YAML config that OpenCode CLI expects. Secrets
-      are injected at VM creation time.
+      Create the template used to render OpenCode configuration with injected
+      secrets at VM launch time.
 
   - id: TASK-003
-    title: Create AppArmor profile for workspace isolation
-    depends_on: []
-    components: [cloud-init/apparmor-profile]
-    stories: [US-005]
-    requirements: [DEV-018, DEV-019, DEV-020]
-    done: true
-    description: >-
-      Define AppArmor profile that restricts file writes to
-      /home/opencode/workspace/. Make /home/opencode/.config/opencode/ read-only
-      after initial setup. Deny writes to all other paths. Profile should be
-      loaded by cloud-init during VM initialization.
-
-  - id: TASK-004
     title: Create base cloud-init configuration
     depends_on: [TASK-001]
     components: [cloud-init/base.yaml]
-    stories: [US-001, US-007]
-    requirements: [DEV-001, DEV-002, DEV-025]
+    stories: [US-001, US-005]
+    requirements: [DEV-001, DEV-002, DEV-018]
     done: true
     description: >-
-      Create cloud-init YAML for base VM setup. Install packages from official
-      Ubuntu repos only (git, curl, wget, python3, python3-pip, python3-venv,
-      nodejs, npm, iptables, iptables-persistent, apparmor, apparmor-utils).
-      Create non-root user "opencode" with home directory and appropriate groups.
+      Install base packages from official Ubuntu repositories, create the
+      non-root opencode user, and prepare workspace and configuration directories.
+
+  - id: TASK-004
+    title: Create security cloud-init configuration
+    depends_on: [TASK-001, TASK-002, TASK-003]
+    components: [cloud-init/security.yaml]
+    stories: [US-002, US-003, US-004, US-005]
+    requirements: [DEV-005, DEV-006, DEV-007, DEV-008, DEV-010, DEV-011, DEV-012, DEV-017, DEV-019, DEV-020, DEV-021]
+    done: true
+    description: >-
+      Configure outbound network restrictions, disable SSH access, lock the
+      OpenCode config directory after setup, and install OpenCode with checksum
+      verification.
 
   - id: TASK-005
-    title: Create security cloud-init configuration
-    depends_on: [TASK-001, TASK-002, TASK-003, TASK-004]
-    components: [cloud-init/security.yaml]
-    stories: [US-002, US-003, US-004, US-005, US-007]
-    requirements: [DEV-005, DEV-006, DEV-007, DEV-008, DEV-010, DEV-011, DEV-012, DEV-017, DEV-027, DEV-028]
-    done: true
-    description: >-
-      Create cloud-init YAML for security hardening. Configure iptables with
-      default-deny OUTPUT chain and ACCEPT rules from network whitelist.
-      Load AppArmor profile for workspace isolation. Install OpenCode CLI
-      with SHA256 checksum verification. Pre-seed SSH host keys for GitHub
-      and GitLab. Configure git user name and email. Inject secrets via
-      write_files to OpenCode config. Verify checksum before installation
-      and abort on mismatch.
-
-  - id: TASK-006
     title: Create launch script
-    depends_on: [TASK-004, TASK-005]
+    depends_on: [TASK-003, TASK-004]
     components: [scripts/launch.sh]
     stories: [US-001, US-002, US-003, US-004]
     requirements: [DEV-001, DEV-003, DEV-004, DEV-009, DEV-016, DEV-017]
     done: true
     description: >-
-      Create Bash script to orchestrate VM creation. Parse arguments (--repo,
-      --secrets, --network, --name, --dry-run). Validate inputs (secrets file
-      exists, network YAML valid). Read secrets file. Generate cloud-init YAML
-      from templates (base + security + user-provided network). Invoke
-      `multipass launch` with appropriate parameters. Handle dry-run mode by
-      displaying config without creating VM. Display success/error messages.
+      Create the script that validates inputs, renders cloud-init, launches the
+      VM, and reports how to connect to the workspace.
 
-  - id: TASK-007
-    title: Create teardown script
-    depends_on: []
-    components: [scripts/teardown.sh]
-    stories: [US-006]
-    requirements: [DEV-021, DEV-022, DEV-023, DEV-024]
-    done: true
-    description: >-
-      Create Bash script to destroy VMs. Parse arguments (--name, --force).
-      Validate VM exists via `multipass info`. Require confirmation unless
-      --force flag provided. Execute `multipass delete --purge`. Display
-      success/error messages.
-
-  - id: TASK-008
+  - id: TASK-006
     title: Create secrets injection helper script
     depends_on: [TASK-002]
     components: [scripts/inject-secrets.sh]
@@ -119,63 +78,27 @@ tasks:
     requirements: [DEV-007, DEV-008]
     done: true
     description: >-
-      Create helper script that processes secrets.env file and generates
-      cloud-init write_files directives. Validate secret format (KEY=value).
-      Escape special characters for YAML embedding. Output formatted cloud-init
-      snippet that launch.sh will include. Used internally by launch.sh.
+      Create the helper that transforms secrets.env content into cloud-init-safe
+      configuration snippets.
 
-  - id: TASK-009
-    title: Create python requirements template with hash verification
+  - id: TASK-007
+    title: Create Python requirements template with hash verification
     depends_on: []
     components: [templates/requirements.pinned.txt.j2]
-    stories: [US-007]
-    requirements: [DEV-026]
-    done: true
-    description: >-
-      Create template for Python requirements with hash verification.
-      Include common packages for AI coding (e.g., pip-audit, safety for
-      vulnerability scanning). Document how users can add their own pinned
-      requirements. Template will be used during VM provisioning.
-
-  - id: TASK-010
-    title: Create directory structure and file permissions setup
-    depends_on: [TASK-004]
-    components: [cloud-init/base.yaml (directory setup)]
     stories: [US-005]
-    requirements: [DEV-018]
+    requirements: [DEV-019]
     done: true
     description: >-
-      Extend base cloud-init to create workspace directory structure.
-      Create /home/opencode/workspace/ with write permissions for opencode
-      user. Create /home/opencode/.config/opencode/ for OpenCode config.
-      Set ownership to opencode:opencode. Set appropriate permissions
-      (workspace: 0755, config: 0700).
+      Document and template a hash-verified Python requirements file for
+      reproducible and auditable package installation.
 
-  - id: TASK-011
-    title: Integrate all components and test VM launch flow
-    depends_on: [TASK-006, TASK-007, TASK-008]
-    components: [scripts/launch.sh, scripts/teardown.sh, scripts/inject-secrets.sh]
-    stories: [US-001, US-002, US-003, US-004, US-005, US-006, US-007]
-    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-015, DEV-016, DEV-017, DEV-018, DEV-019, DEV-020, DEV-021, DEV-022, DEV-023, DEV-024, DEV-025, DEV-026, DEV-027, DEV-028]
+  - id: TASK-008
+    title: Integrate components and document usage
+    depends_on: [TASK-005, TASK-006, TASK-007]
+    components: [scripts/launch.sh, scripts/inject-secrets.sh, README.md]
+    stories: [US-001, US-002, US-003, US-004, US-005]
+    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-015, DEV-016, DEV-017, DEV-018, DEV-019, DEV-020, DEV-021]
     done: true
     description: >-
-      Integrate all cloud-init configs, scripts, and templates. Test the
-      complete launch flow: validate arguments, read secrets, generate
-      cloud-init, launch VM, verify packages installed, verify security
-      controls applied, verify OpenCode installed and configured, verify
-      git configured, verify repository cloned. Test teardown flow.
-      Document manual testing procedure.
-
-  - id: TASK-012
-    title: Create README documentation
-    depends_on: [TASK-011]
-    components: [README.md]
-    stories: [US-001, US-002, US-003, US-004, US-005, US-006, US-007]
-    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-015, DEV-016, DEV-017, DEV-018, DEV-019, DEV-020, DEV-021, DEV-022, DEV-023, DEV-024, DEV-025, DEV-026, DEV-027, DEV-028]
-    done: true
-    description: >-
-      Write README.md with usage instructions. Include prerequisites
-      (Multipass installed). Document launch.sh arguments and examples.
-      Document teardown.sh usage. Explain security model and network
-      whitelist customization. Include troubleshooting section. Add example
-      secrets.env format (without actual secrets).
+      Verify the launch flow end to end and document the simplified workflow,
+      including connection, network customization, and verification steps.

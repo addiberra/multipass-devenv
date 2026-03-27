@@ -3,15 +3,15 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "1.0.0"
-last_updated: "2026-03-25"
+version: "1.1.0"
+last_updated: "2026-03-27"
 
 constraint_notes:
   - constraint: "The system SHALL NOT mount host directories into the VM."
     category: Security
     note: >-
-      C-001 enforces no host mounts. The feature assumes repo cloning
-      inside the VM, not mounting from host.
+      C-001 enforces no host mounts. Repositories are cloned inside the VM,
+      not mounted from the host.
 
   - constraint: "The system SHALL block all network egress except whitelisted domains."
     category: Security
@@ -19,17 +19,21 @@ constraint_notes:
       C-002 provides network filtering. Requirements specify the allowed
       endpoints and how custom whitelists work.
 
-  - constraint: "The system SHALL inject secrets via cloud-init, not environment variables."
+  - constraint: "The system SHALL inject secrets via cloud-init write_files, not environment variables or host mounts."
     category: Security
     note: >-
-      C-003 mandates the mechanism. Requirements specify how secrets
-      are provided by the developer and validated.
+      C-003 mandates secret delivery through cloud-init rather than inherited
+      host environment variables.
 
-  - constraint: "The system SHALL destroy the VM after session completion."
+  - constraint: "The system SHALL disable SSH access to the VM."
     category: Security
     note: >-
-      C-006 enforces ephemeral lifecycle. Requirements specify the
-      teardown workflow.
+      C-004 ensures access happens through Multipass-managed shell sessions only.
+
+  - constraint: "The system SHALL run OpenCode as a non-root user."
+    category: Security
+    note: >-
+      C-005 requires a dedicated non-root execution context inside the VM.
 
 stories:
   - id: US-001
@@ -228,95 +232,13 @@ stories:
           Confirm an error is displayed and VM creation is aborted.
 
   - id: US-005
-    title: Maintain Filesystem Isolation
-    narrative:
-      as_a: developer
-      i_want: file writes restricted to the workspace directory
-      so_that: compromised agents cannot modify system files or establish persistence
-    requirements:
-      - id: DEV-018
-        text: >-
-          The system shall enforce AppArmor rules that restrict write
-          operations to /home/opencode/workspace/ and its subdirectories.
-        ears_type: ubiquitous
-        verification: >-
-          After VM launch, run `multipass shell <name>` and attempt
-          `touch /tmp/test-write`. Confirm permission denied.
-          Then try `touch /home/opencode/workspace/test-write`.
-          Confirm the file is created successfully.
-
-      - id: DEV-019
-        text: >-
-          The system shall prevent write access to OpenCode configuration
-          files after initial setup.
-        ears_type: ubiquitous
-        verification: >-
-          After VM launch, run `multipass shell <name>` and attempt
-          `echo 'malicious' >> /home/opencode/.config/opencode/config.yaml`.
-          Confirm permission denied.
-
-      - id: DEV-020
-        text: >-
-          If AppArmor profile cannot be loaded during initialization,
-          the system shall abort the launch and display an error.
-        ears_type: unwanted-behavior
-        verification: >-
-          Simulate AppArmor failure by providing an invalid profile
-          (requires integration test). Confirm VM creation is aborted
-          with appropriate error message.
-
-  - id: US-006
-    title: Destroy Environment After Use
-    narrative:
-      as_a: developer
-      i_want: all traces of my session removed when done
-      so_that: secrets and artifacts don't accumulate or leak
-    requirements:
-      - id: DEV-021
-        text: >-
-          When the teardown script is invoked, the system shall destroy
-          the Multipass VM and all its data.
-        ears_type: event-driven
-        verification: >-
-          After a session, run `./scripts/teardown.sh --name <name>`.
-          Run `multipass list` and confirm the VM no longer exists.
-
-      - id: DEV-022
-        text: >-
-          The teardown script shall require explicit confirmation before
-          destroying a VM.
-        ears_type: ubiquitous
-        verification: >-
-          Run `./scripts/teardown.sh --name <name>` without flags.
-          Confirm a confirmation prompt appears. Cancel the operation.
-          Confirm the VM still exists.
-
-      - id: DEV-023
-        text: >-
-          When the --force flag is provided to teardown, the system shall
-          destroy the VM without prompting for confirmation.
-        ears_type: event-driven
-        verification: >-
-          Run `./scripts/teardown.sh --name <name> --force`.
-          Confirm the VM is destroyed immediately without a prompt.
-
-      - id: DEV-024
-        text: >-
-          If the specified VM name does not exist, the teardown script
-          shall display an error and exit without action.
-        ears_type: unwanted-behavior
-        verification: >-
-          Run `./scripts/teardown.sh --name nonexistent-vm`.
-          Confirm an error message is displayed and no VMs are affected.
-
-  - id: US-007
     title: Verify Supply Chain Integrity
     narrative:
       as_a: developer
       i_want: all installed software verified for integrity
       so_that: I can trust the development environment hasn't been tampered with
     requirements:
-      - id: DEV-025
+      - id: DEV-018
         text: >-
           The system shall install apt packages only from official
           Ubuntu repositories.
@@ -326,7 +248,7 @@ stories:
           `cat /etc/apt/sources.list`. Confirm only official Ubuntu
           repositories are listed (no PPAs).
 
-      - id: DEV-026
+      - id: DEV-019
         text: >-
           When a requirements file with hashes is provided, the system shall
           verify Python package hashes during installation.
@@ -336,7 +258,7 @@ stories:
           check the pip installation log. Confirm hash verification
           was performed for each package.
 
-      - id: DEV-027
+      - id: DEV-020
         text: >-
           The system shall install OpenCode CLI only after verifying
           the SHA256 checksum matches the expected value.
@@ -345,7 +267,7 @@ stories:
           Review the cloud-init log. Confirm the checksum verification step
           passed before OpenCode was moved to /usr/local/bin/.
 
-      - id: DEV-028
+      - id: DEV-021
         text: >-
           If OpenCode checksum verification fails, the system shall
           abort VM initialization and display an error.

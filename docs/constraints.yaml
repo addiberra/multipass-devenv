@@ -49,17 +49,17 @@ categories:
           The system SHALL run OpenCode as a non-root user.
         rationale: >-
           Running agents as non-root limits the damage from compromised
-          code execution. Root access would allow bypassing AppArmor
-          profiles and other security controls.
+          code execution. Root access would increase the blast radius inside
+          the guest and weaken the intended isolation model.
         added: "2026-03-25"
 
       - id: C-006
         text: >-
-          The system SHALL destroy the VM after session completion.
+          The system SHALL leave VM lifecycle management to the developer.
         rationale: >-
-          Ephemeral lifecycle prevents accumulation of secrets,
-          intellectual property, and exploitable code artifacts.
-          NVIDIA recommends lifecycle management as a core control.
+          This project provisions isolated VMs but does not enforce session
+          teardown in-product. Cleanup remains an operational choice outside
+          the launch workflow.
         added: "2026-03-25"
 
   - name: Isolation
@@ -84,12 +84,12 @@ categories:
 
       - id: C-009
         text: >-
-          The system SHALL use AppArmor or equivalent to enforce
-          filesystem restrictions.
+          The system SHALL rely on VM isolation rather than in-guest
+          filesystem confinement.
         rationale: >-
-          Application-level controls are insufficient for agentic tools
-          that execute arbitrary code. OS-level enforcement via AppArmor
-          provides kernel-backed security boundaries.
+          Multipass VM isolation is the primary security boundary for this
+          project. The implementation intentionally avoids additional
+          filesystem MAC policy inside the guest.
         added: "2026-03-25"
 
   - name: Supply Chain

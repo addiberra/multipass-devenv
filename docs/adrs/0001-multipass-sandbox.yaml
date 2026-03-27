@@ -17,25 +17,22 @@ context: >-
   to prevent accumulation of secrets and intellectual property.
 
 decision: >-
-  Use Multipass to create ephemeral Ubuntu VMs with complete kernel isolation from the
+  Use Multipass to create Ubuntu VMs with complete kernel isolation from the
   host. The VM will be configured with:
   
   1. Network egress restricted to whitelisted domains via iptables (GitHub/GitLab,
      OpenAI API, OpenCode API, package registries)
-  2. File writes blocked outside /home/ubuntu/workspace via AppArmor
-  3. OpenCode configuration files made immutable
-  4. No host directory mounts - repos cloned inside VM
-  5. Secret injection via cloud-init write_files, not host env vars
-  6. SSH disabled - access only via multipass shell
-  7. Non-root 'opencode' user for agent execution
-  8. Fresh Ubuntu image each session for latest security patches
-  9. VM destroyed after session to prevent accumulation
+  2. OpenCode configuration files made immutable after provisioning
+  3. No host directory mounts - repos cloned inside VM
+  4. Secret injection via cloud-init write_files, not host env vars
+  5. SSH disabled - access only via multipass shell
+  6. Non-root 'opencode' user for agent execution
+  7. Fresh Ubuntu image for latest security patches
 
 consequences:
   easier:
     - Complete isolation from host filesystem and credentials
     - Kernel-level security boundaries (full virtualization)
-    - Automatic cleanup of all artifacts on teardown
     - Latest security patches with fresh Ubuntu instances
     - Reproducible development environments
   harder:

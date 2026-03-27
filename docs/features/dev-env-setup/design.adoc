@@ -1,55 +1,37 @@
 = Design: Dev Environment Setup
-:version: 1.0.0
-:source-spec-version: 1.0.0
+:version: 1.1.0
+:source-spec-version: 1.1.0
 :status: Current
-:last-updated: 2026-03-25
+:last-updated: 2026-03-27
 :feature: dev-env-setup
 :toc:
 
 == Technical Context
 
-Creating a secure, ephemeral development environment for agentic AI coding tools like OpenCode CLI. The system uses Multipass to launch Ubuntu VMs with kernel-level isolation from the host, following NVIDIA AI Red Team security guidance for sandboxing agentic workloads.
+This feature creates an isolated development environment for agentic coding tools by launching a fresh Multipass VM and provisioning it with cloud-init. The simplified design now relies on VM isolation as the primary boundary rather than in-guest filesystem MAC controls or a project-managed teardown workflow.
 
 Key security principles:
 
-* **Kernel isolation**: Full VM virtualization (not containers) separates agent execution from host kernel
-* **No host mounts**: Repositories are cloned inside the VM, not mounted from host
-* **Network egress controls**: iptables whitelist restricts outbound traffic
-* **Filesystem isolation**: AppArmor confines writes to designated workspace
-* **Secret injection**: Credentials injected via cloud-init, not inherited from host
-* **Ephemeral lifecycle**: VM destroyed after session to prevent accumulation
+* **Kernel isolation**: Full VM virtualization separates agent execution from the host kernel.
+* **No host mounts**: Repositories are cloned inside the VM instead of mounted from the host.
+* **Network egress controls**: iptables applies a default-deny outbound policy with a small allowlist.
+* **Secret injection**: Credentials are written into the VM by cloud-init instead of inherited from the host environment.
+* **Non-root execution**: OpenCode runs as the `opencode` user.
 
 == Decisions and Constraints
 
-* ADR-0001: Use Multipass VM for Secure Agentic AI Development Environment (see docs/adrs/0001-multipass-sandbox.yaml)
+* ADR-0001: Use Multipass VM for Secure Agentic AI Development Environment (see `docs/adrs/0001-multipass-sandbox.yaml`)
 
-Architecture constraints (from docs/constraints.yaml):
+Relevant constraints from `docs/constraints.yaml`:
 
 * C-001: No host directory mounts
 * C-002: Network egress blocked except whitelisted domains
-* C-003: Secret injection via cloud-init
+* C-003: Secret injection via cloud-init write_files
 * C-004: SSH disabled
 * C-005: Non-root user execution
-* C-006: VM destruction after session
-* C-007: File writes restricted to workspace
 * C-008: No host credential exposure
-* C-009: AppArmor enforcement
-* C-010-C-016: Supply chain integrity (official repos, hash verification, pinned versions)
+* C-010-C-016: Supply chain integrity controls
 * C-017-C-019: DNS and network restrictions
-
-== Research and Unknowns
-
-=== Resolved
-
-VM lifecycle approach:: Fresh Ubuntu 24.04 LTS for each session. No snapshots or persistent state. Ensures latest security patches and prevents artifact accumulation.
-
-Secret delivery mechanism:: User provides .env file. Launch script reads it and passes to cloud-init via `write_files`. Secrets never touch host environment variables.
-
-Network whitelisting strategy:: iptables with default-deny OUTPUT chain. Explicit ACCEPT rules for whitelisted domains. DNS restricted to trusted resolvers.
-
-=== Open Questions
-
-None. All decisions finalized.
 
 == System Design
 
@@ -60,7 +42,6 @@ None. All decisions finalized.
 flowchart LR
     subgraph Host["Host Machine"]
         LS[launch.sh]
-        TS[teardown.sh]
         ENV[secrets.env]
         NWF[network-whitelist.yaml]
     end
@@ -68,21 +49,19 @@ flowchart LR
     subgraph Multipass["Multipass Daemon"]
         CMD[multipass launch]
         SHELL[multipass shell]
-        DEL[multipass delete]
     end
 
     subgraph VM["Multipass VM (Ubuntu 24.04)"]
         subgraph Init["cloud-init"]
             PKG[Package Install]
             USER[opencode user]
-            SEC[Security Config]
+            SEC[Network Hardening]
             OPENCODE[OpenCode CLI]
         end
 
         subgraph Runtime["Runtime"]
             WS[/home/opencode/workspace/]
             IPT[iptables rules]
-            AA[AppArmor profile]
             GIT[git]
             PY[Python]
             NPM[Node.js]
@@ -104,16 +83,12 @@ flowchart LR
     Init --> Runtime
     Runtime --> WS
     Runtime --> IPT
-    Runtime --> AA
 
     SHELL -->|interactive| WS
 
     IPT -->|whitelisted| GH
     IPT -->|whitelisted| LLM
     IPT -->|whitelisted| PKGREG
-
-    TS -->|invokes| DEL
-    DEL -->|destroys| VM
 ----
 
 === Launch Flow
@@ -126,249 +101,124 @@ sequenceDiagram
     participant MP as Multipass
     participant CI as cloud-init
     participant VM as Ubuntu VM
-    participant SEC as Security Config
 
     User->>LS: ./launch.sh --repo URL --secrets file
     LS->>LS: Parse arguments
-    LS->>LS: Validate --secrets file exists
-    LS->>LS: Read secrets.env
+    LS->>LS: Validate secrets and network config
 
     alt --dry-run
-        LS-->>User: Display config (no VM created)
+        LS-->>User: Display generated config only
     else normal launch
-        LS->>LS: Generate cloud-init YAML
+        LS->>LS: Generate merged cloud-init YAML
         LS->>MP: multipass launch --cloud-init
         MP->>VM: Create VM
         VM->>CI: Run cloud-init
-
-        CI->>VM: Install packages (apt)
+        CI->>VM: Install packages
         CI->>VM: Create opencode user
-        CI->>SEC: Configure iptables
-        CI->>SEC: Load AppArmor profile
-        CI->>VM: Install OpenCode CLI (checksum verified)
-        CI->>VM: Inject secrets to config
+        CI->>VM: Apply iptables rules
+        CI->>VM: Disable SSH
+        CI->>VM: Install OpenCode CLI
+        CI->>VM: Inject secrets and git config
         CI->>VM: Clone repository
-
-        CI-->>VM: cloud-init complete
-        VM-->>MP: VM ready
-        MP-->>LS: VM name
+        MP-->>LS: VM ready
         LS-->>User: Ready message
     end
-----
-
-=== Teardown Flow
-
-[source,mermaid]
-----
-sequenceDiagram
-    actor User
-    participant TS as teardown.sh
-    participant MP as Multipass
-
-    User->>TS: ./teardown.sh --name VM
-
-    alt --force
-        TS->>MP: multipass delete --purge VM
-    else normal
-        TS->>User: Confirm destroy?
-        User->>TS: yes
-        TS->>MP: multipass delete --purge VM
-    end
-
-    MP-->>TS: VM deleted
-    TS-->>User: Teardown complete
 ----
 
 === Host Components
 
 ==== launch.sh
 
-Bash script that orchestrates VM creation. Responsibilities:
+`scripts/launch.sh` is the only project-managed entrypoint. It:
 
-* Parse command-line arguments (--repo, --secrets, --network, --name, --dry-run)
-* Validate inputs (secrets file exists, network config valid YAML)
-* Read secrets from provided file
-* Generate cloud-init YAML from templates
-* Invoke `multipass launch` with appropriate parameters
-* Display success/error messages
-
-==== teardown.sh
-
-Bash script that destroys VMs. Responsibilities:
-
-* Parse --name and --force flags
-* Validate VM exists (multipass list)
-* Require confirmation unless --force
-* Execute `multipass delete --purge`
-* Display success/error messages
+* parses `--repo`, `--secrets`, `--network`, `--name`, and `--dry-run`
+* validates the secrets file and optional network whitelist
+* generates a merged cloud-init document from base provisioning plus security setup
+* launches the VM through Multipass
+* reports the VM name and workspace path
 
 ==== config/network-whitelist.default.yaml
 
-Default network egress whitelist. Structure:
+Defines the default outbound allowlist for git providers, LLM APIs, package registries, and trusted DNS resolvers.
 
-[source,yaml]
-----
-egress_allowed:
-  - domain: github.com
-    ports: [22, 443]
-  - domain: gitlab.com
-    ports: [22, 443]
-  - domain: api.openai.com
-    ports: [443]
-  - domain: api.opencode.ai
-    ports: [443]
-  - domain: pypi.org
-    ports: [443]
-  - domain: registry.npmjs.org
-    ports: [443]
-  - domain: crates.io
-    ports: [443]
+=== VM Components
 
-dns_servers:
-  - 8.8.8.8
-  - 1.1.1.1
-----
+==== Base Provisioning (`cloud-init/base.yaml`)
 
-=== VM Components (cloud-init)
+The base layer installs packages from official Ubuntu repositories, creates the `opencode` user, and prepares the workspace, config, and `.ssh` directories.
 
-==== Package Installation (cloud-init/base.yaml)
+==== Security Provisioning (`cloud-init/security.yaml`)
 
-Install from official Ubuntu repositories only:
+The security layer:
 
-* git - version control
-* curl, wget - HTTP clients
-* python3, python3-pip, python3-venv - Python runtime
-* nodejs, npm - Node.js runtime
-* iptables, iptables-persistent - network firewall
-* apparmor, apparmor-utils - filesystem confinement
+* applies a default-deny outbound iptables policy with loopback and resolver exceptions
+* permits outbound SSH/HTTPS traffic needed for git, APIs, and package downloads
+* disables SSH daemon access so the VM is entered through `multipass shell`
+* locks the OpenCode config directory after secret injection
 
-==== User Creation (cloud-init/base.yaml)
+==== OpenCode Installation
 
-Create non-root user:
+OpenCode is downloaded from the official release source, verified against a pinned SHA256 checksum, installed into `/usr/local/bin`, and validated with `opencode --version`.
 
-* Username: `opencode`
-* Home: `/home/opencode`
-* Shell: `/bin/bash`
-* Groups: `sudo` (for package installation during init only, removed after)
+==== Secret Injection
 
-==== Network Security (cloud-init/security.yaml)
+`launch.sh` reads the developer-provided secrets file and renders cloud-init `write_files` entries for:
 
-iptables configuration:
+* `/home/opencode/.config/opencode/config.yaml`
+* `/home/opencode/.gitconfig`
+* `/home/opencode/.ssh/known_hosts`
 
-* Default policy: DROP on OUTPUT chain
-* Allow outbound to whitelisted domains/ports
-* Allow DNS to trusted resolvers only
-* Allow established connections
-* Log dropped packets (for debugging)
-
-Implementation uses iptables with domain resolution cached at boot time.
-
-==== AppArmor Profile (cloud-init/security.yaml)
-
-Confinement for `/home/opencode`:
-
-* `/home/opencode/workspace/**` - rw (read/write)
-* `/home/opencode/.config/opencode/` - r (read only, secrets injected)
-* `/home/opencode/` - r (read only)
-* `/` - deny (no writes outside home)
-
-The profile is loaded at boot and enforces file write restrictions.
-
-==== OpenCode Installation (cloud-init/security.yaml)
-
-Supply-chain-secure installation:
-
-. Download OpenCode CLI from official GitHub releases
-. Verify SHA256 checksum against pinned value
-. Install to `/usr/local/bin/opencode`
-. Verify binary runs (`opencode --version`)
-
-==== Secret Injection (cloud-init/security.yaml)
-
-Using cloud-init `write_files`:
-
-. Read secrets from launch.sh-provided data
-. Write to `/home/opencode/.config/opende/config.yaml`
-. Set ownership to `opencode:opencode`
-. Set permissions to `0600` (owner read/write only)
-. Make config directory immutable after setup
-
-==== SSH Disable (cloud-init/security.yaml)
-
-Disable SSH access:
-
-* Stop and disable sshd service
-* Remove SSH port from firewall allowed ports
-* Access only via `multipass shell`
+Secrets exist only inside the VM after provisioning.
 
 == Requirement Resolution
 
 === US-001: Launch Secure Dev Environment
 
-Components:: launch.sh, Multipass daemon, cloud-init/base.yaml, cloud-init/security.yaml
+Components:: `scripts/launch.sh`, Multipass, `cloud-init/base.yaml`
 Requirements::
-* DEV-001: Launch fresh Multipass VM with Ubuntu 24.04 LTS -> launch.sh invokes `multipass launch` with Ubuntu 24.04 image, cloud-init provisions the VM
-* DEV-002: Create non-root user "opencode" -> cloud-init creates user with username "opencode", home directory, and appropriate groups
-* DEV-003: --dry-run displays config without creating VM -> launch.sh checks flag, outputs configuration to stdout, exits without invoking multipass
-* DEV-004: Abort on missing secrets file -> launch.sh validates file existence before proceeding, displays error and exits with non-zero status if missing
+* DEV-001: `launch.sh` invokes `multipass launch` with Ubuntu 24.04.
+* DEV-002: cloud-init creates the non-root `opencode` user.
+* DEV-003: `--dry-run` prints generated configuration without launching a VM.
+* DEV-004: launch aborts if the secrets file is missing or unreadable.
 
 === US-002: Configure OpenCode with Secrets
 
-Components:: launch.sh, cloud-init/security.yaml, secrets.env (user-provided)
+Components:: `scripts/launch.sh`, `cloud-init/security.yaml`, secrets file
 Requirements::
-* DEV-005: Install OpenCode CLI from official source -> cloud-init downloads from github.com releases, verifies checksum
-* DEV-006: Verify OpenCode CLI checksum -> cloud-init uses SHA256 hash verification before moving binary to /usr/local/bin/
-* DEV-007: Inject secrets from --secrets file -> launch.sh reads secrets.env, passes to cloud-init write_files directive, cloud-init writes to /home/opencode/.config/opencode/
-* DEV-008: No host env var inheritance -> Multipass VM starts with clean environment, secrets only exist via cloud-init write_files
+* DEV-005: cloud-init installs OpenCode from the official source.
+* DEV-006: installation includes SHA256 verification before placement in `/usr/local/bin`.
+* DEV-007: secrets are written into the VM through cloud-init `write_files`.
+* DEV-008: the VM starts from a clean environment instead of inheriting host variables.
 
 === US-003: Work on Git Repositories
 
-Components:: cloud-init/base.yaml, cloud-init/security.yaml, launch.sh
+Components:: `scripts/launch.sh`, `cloud-init/base.yaml`, `cloud-init/security.yaml`
 Requirements::
-* DEV-009: Clone repository inside VM -> launch.sh passes --repo URL, cloud-init executes `git clone` into /home/opencode/workspace/
-* DEV-010: Pre-seed SSH host keys -> cloud-init writes known_hosts for github.com and gitlab.com to /home/opencode/.ssh/known_hosts
-* DEV-011: Configure git user name/email -> secrets.env contains GIT_USER_NAME and GIT_USER_EMAIL, cloud-init configures via `git config --global`
+* DEV-009: `launch.sh` clones the requested repository into `/home/opencode/workspace`.
+* DEV-010: GitHub and GitLab host keys are pre-seeded in `known_hosts`.
+* DEV-011: git user name and email come from the secrets file.
 
 === US-004: Restrict Network Access
 
-Components:: cloud-init/security.yaml, config/network-whitelist.default.yaml (and user overrides)
+Components:: `scripts/launch.sh`, `config/network-whitelist.default.yaml`, `cloud-init/security.yaml`
 Requirements::
-* DEV-012: Block all outbound except whitelist -> iptables OUTPUT chain default policy DROP, explicit ACCEPT rules for whitelisted domains
-* DEV-013: Allow GitHub/GitLab on 22/443 -> iptables ACCEPT rules for github.com, gitlab.com on ports 22 and 443
-* DEV-014: Allow OpenAI/OpenCode APIs on 443 -> iptables ACCEPT rules for api.openai.com, api.opencode.ai on port 443
-* DEV-015: Allow package registries on 443 -> iptables ACCEPT rules for pypi.org, registry.npmjs.org, crates.io on port 443
-* DEV-016: Custom --network whitelist -> launch.sh reads user-provided YAML, generates iptables rules from that instead of default
-* DEV-017: Abort on malformed network config -> launch.sh validates YAML structure before VM creation, aborts with error message if invalid
+* DEV-012: iptables blocks outbound traffic except explicit allowlist rules.
+* DEV-013: GitHub and GitLab are reachable on ports 22 and 443.
+* DEV-014: OpenAI and OpenCode APIs are reachable on port 443.
+* DEV-015: package registries are reachable on port 443.
+* DEV-016: `--network` replaces the default allowlist with user-provided rules.
+* DEV-017: malformed network config aborts launch before VM creation.
 
-=== US-005: Maintain Filesystem Isolation
+=== US-005: Verify Supply Chain Integrity
 
-Components:: cloud-init/security.yaml, AppArmor profile
+Components:: `cloud-init/base.yaml`, `cloud-init/security.yaml`
 Requirements::
-* DEV-018: Restrict writes to /home/opencode/workspace/ -> AppArmor profile loaded by cloud-init enforces path rules
-* DEV-019: Prevent writes to OpenCode config -> AppArmor marks /home/opencode/.config/opencode/ as read-only after initial setup
-* DEV-020: Abort on AppArmor load failure -> cloud-init checks return code of `apparmor_parser`, aborts VM provisioning if non-zero
-
-=== US-006: Destroy Environment After Use
-
-Components:: teardown.sh
-Requirements::
-* DEV-021: Destroy VM and all data -> teardown.sh invokes `multipass delete --purge <name>`, removing VM and its disk image
-* DEV-022: Require explicit confirmation -> teardown.sh prompts "Destroy VM <name>? [y/N]" before proceeding (absent --force)
-* DEV-023: --force skips confirmation -> teardown.sh checks flag, skips prompt if present
-* DEV-024: Error on non-existent VM -> teardown.sh runs `multipass info <name>` first, exits with error if VM not found
-
-=== US-007: Verify Supply Chain Integrity
-
-Components:: cloud-init/base.yaml, cloud-init/security.yaml
-Requirements::
-* DEV-025: Install apt from official repos only -> cloud-init uses default Ubuntu sources.list, no PPAs added
-* DEV-026: Verify Python package hashes -> User-provided requirements.txt must include hashes, cloud-init runs `pip install --require-hashes`
-* DEV-027: Verify OpenCode checksum -> cloud-init downloads binary, computes SHA256, compares against pinned value
-* DEV-028: Abort on checksum mismatch -> cloud-init checks checksum before installation, aborts with error if mismatch
+* DEV-018: apt packages come only from official Ubuntu repositories.
+* DEV-019: Python package installation supports hash-verified requirements.
+* DEV-020: OpenCode installation validates the pinned checksum before install.
+* DEV-021: checksum mismatch aborts initialization.
 
 == File Structure
-
-The implementation produces the following artifacts:
 
 [source]
 ----
@@ -380,8 +230,8 @@ multipass-devenv/
 │   └── security.yaml
 ├── scripts/
 │   ├── launch.sh
-│   ├── teardown.sh
 │   └── inject-secrets.sh
 └── templates/
-    └── opencode-config.yaml.j2
+    ├── opencode-config.yaml.j2
+    └── requirements.pinned.txt.j2
 ----
