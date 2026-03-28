@@ -3,7 +3,7 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "1.1.0"
+version: "1.2.0"
 last_updated: "2026-03-27"
 
 constraint_notes:
@@ -34,6 +34,8 @@ constraint_notes:
     category: Security
     note: >-
       C-005 requires a dedicated non-root execution context inside the VM.
+      DEV-022 strengthens this by revoking administrative privileges after
+      setup completes, so the runtime user cannot escalate.
 
 stories:
   - id: US-001
@@ -213,13 +215,14 @@ stories:
       - id: DEV-016
         text: >-
           When a custom network whitelist is provided via --network, the
-          system shall apply those rules instead of the default.
+          system shall apply the domains, ports, and DNS servers from that
+          file instead of the defaults.
         ears_type: event-driven
         verification: >-
-          Create a custom whitelist allowing only github.com. Run
-          `./scripts/launch.sh --network custom-whitelist.yaml ...`.
-          Attempt to connect to api.openai.com. Confirm the connection
-          is blocked.
+          Create a custom whitelist with a single allowed domain and a
+          custom DNS server. Run `./scripts/launch.sh --network custom-whitelist.yaml ...`.
+          Confirm only the custom domain is reachable and that
+          `/etc/resolv.conf` or iptables DNS rules reflect the custom resolver.
 
       - id: DEV-017
         text: >-
@@ -276,3 +279,20 @@ stories:
           Simulate checksum mismatch by modifying the download URL or
           checksum in cloud-init (requires integration test). Confirm
           VM initialization aborts with appropriate error.
+
+  - id: US-006
+    title: Harden Runtime Privileges
+    narrative:
+      as_a: developer
+      i_want: the agent user to have no administrative privileges after setup
+      so_that: a compromised agent cannot escalate privileges to bypass security controls
+    requirements:
+      - id: DEV-022
+        text: >-
+          When VM initialization completes, the system shall revoke
+          administrative privileges from the opencode user.
+        ears_type: event-driven
+        verification: >-
+          After VM launch, run `multipass shell <name>` and execute
+          `sudo -n true 2>&1`. Confirm the command fails, indicating
+          the opencode user cannot execute commands with elevated privileges.

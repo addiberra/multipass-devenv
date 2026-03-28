@@ -51,9 +51,9 @@ escape_yaml_string() {
 # Format: KEY=value (one per line, # for comments)
 generate_write_files() {
     local secrets_file="$1"
-    local opencode_config="/home/opencode/config/opencode/appconfig.yaml"
-    local gitconfig="/home/opencode/.gitconfig"
-    local ssh_dir="/home/opencode/.ssh"
+    local _opencode_config="/home/opencode/config/opencode/appconfig.yaml"
+    local _gitconfig="/home/opencode/.gitconfig"
+    local _ssh_dir="/home/opencode/.ssh"
     
     # Initialize variables for known secrets
     local OPENAI_API_KEY=""
@@ -135,8 +135,6 @@ EOF
     
     # Write any additional secrets as environment file
     if [[ -n "$additional_secrets" ]]; then
-        local escaped_secrets
-        escaped_secrets=$(escape_yaml_string "$additional_secrets")
         cat <<EOF
   - path: /home/opencode/.config/opencode/secrets.env
     owner: opencode:opencode
@@ -169,7 +167,7 @@ validate_secrets() {
     local line_num=0
     
     while IFS= read -r line || [[ -n "$line" ]]; do
-        ((line_num += 1))
+        ((line_num++))
         
         # Skip comments and empty lines
         [[ "$line" =~ ^[[:space:]]*# ]] && continue

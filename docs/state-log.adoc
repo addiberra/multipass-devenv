@@ -10,10 +10,10 @@
 :desired-state: Egress whitelist enforced at domain level via DNS resolution, opencode user has no sudo, DNS servers read from whitelist config, launch.sh reads actual YAML files instead of duplicating them, constraint cross-references are consistent, shellcheck validation exists, no stale teardown references remain
 :prior-state: Port-level egress only (any 22/443 destination reachable), opencode has NOPASSWD sudo, DNS hardcoded, generate_cloud_init duplicates security.yaml, inconsistent constraint refs
 :capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
-:capabilities-invoked:
-:constraints-checked:
-:result: In Progress
-:artifacts-modified:
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass), Network (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v1.2.0), docs/features/dev-env-setup/design.adoc (v1.2.0), docs/features/dev-env-setup/tasks.yaml (v2.0.0), docs/architecture.adoc (v1.2.0), cloud-init/security.yaml, cloud-init/base.yaml, scripts/launch.sh, scripts/inject-secrets.sh, scripts/validate.sh (new)
 
 == TRANSITION-002
 :date: 2026-03-27

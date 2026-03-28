@@ -1,37 +1,33 @@
 #cloud-config
 # Security cloud-init configuration for secure dev environment
-# Configures network restrictions, SSH disablement, and post-boot hardening
+# Provides the static iptables skeleton, SSH disablement, and post-boot hardening
 #
-# See docs/features/dev-env-setup/spec.yaml US-002, US-003, US-004, US-005
-# See docs/constraints.yaml C-002-C-005, C-008, C-010-C-019
+# See docs/features/dev-env-setup/spec.yaml US-004, US-006
+# See docs/constraints.yaml C-002, C-004, C-005, C-009
 #
-# This file is merged with base.yaml by launch.sh
+# Domain-specific iptables rules and DNS resolver rules are generated
+# dynamically by launch.sh from the network whitelist configuration.
+# This file contains only the static base that does not vary per launch.
 
 runcmd:
-  # Configure iptables for network isolation (DEV-012-DEV-017)
+  # Default-deny policies (DEV-012)
   - iptables -P OUTPUT DROP
   - iptables -P INPUT DROP
   - iptables -P FORWARD DROP
+
+  # Allow loopback and established connections
   - iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
   - iptables -A INPUT -i lo -j ACCEPT
   - iptables -A OUTPUT -o lo -j ACCEPT
 
-  # DNS to trusted resolvers only
-  - iptables -A OUTPUT -p udp --dport 53 -d 8.8.8.8 -j ACCEPT
-  - iptables -A OUTPUT -p udp --dport 53 -d 1.1.1.1 -j ACCEPT
-  - iptables -A OUTPUT -p tcp --dport 53 -d 8.8.8.8 -j ACCEPT
-  - iptables -A OUTPUT -p tcp --dport 53 -d 1.1.1.1 -j ACCEPT
-
-  # Allow outbound traffic to approved services
-  - iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT
-  - iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT
+  # === PLACEHOLDER: launch.sh injects DNS and per-IP rules here ===
 
   # Log dropped packets for debugging
   - iptables -A OUTPUT -j LOG --log-prefix "IPTABLES_DROP: " --log-level 4
   - iptables -A INPUT -j LOG --log-prefix "IPTABLES_DROP: " --log-level 4
   - iptables-save > /etc/iptables/rules.v4
 
-  # Disable SSH access
+  # Disable SSH access (DEV-004)
   - systemctl stop sshd || true
   - systemctl disable sshd || true
 

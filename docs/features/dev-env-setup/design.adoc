@@ -1,8 +1,8 @@
 = Design: Dev Environment Setup
-:version: 1.1.0
-:source-spec-version: 1.1.0
+:version: 1.2.0
+:source-spec-version: 1.2.0
 :status: Current
-:last-updated: 2026-03-27
+:last-updated: 2026-03-28
 :feature: dev-env-setup
 :toc:
 
@@ -16,7 +16,8 @@ Key security principles:
 * **No host mounts**: Repositories are cloned inside the VM instead of mounted from the host.
 * **Network egress controls**: iptables applies a default-deny outbound policy with a small allowlist.
 * **Secret injection**: Credentials are written into the VM by cloud-init instead of inherited from the host environment.
-* **Non-root execution**: OpenCode runs as the `opencode` user.
+* **Non-root execution**: OpenCode runs as the `opencode` user with no administrative privileges.
+* **Domain-level filtering**: Whitelist domains are resolved to IP addresses at launch time for iptables enforcement.
 
 == Decisions and Constraints
 
@@ -105,21 +106,26 @@ sequenceDiagram
     User->>LS: ./launch.sh --repo URL --secrets file
     LS->>LS: Parse arguments
     LS->>LS: Validate secrets and network config
+    LS->>LS: Parse whitelist YAML (domains, ports, DNS servers)
+    LS->>LS: Resolve whitelist domains to IPs via dig
 
     alt --dry-run
         LS-->>User: Display generated config only
     else normal launch
-        LS->>LS: Generate merged cloud-init YAML
+        LS->>LS: Read base.yaml and security.yaml
+        LS->>LS: Generate per-IP iptables rules from resolved addresses
+        LS->>LS: Merge into single cloud-init document
         LS->>MP: multipass launch --cloud-init
         MP->>VM: Create VM
         VM->>CI: Run cloud-init
         CI->>VM: Install packages
-        CI->>VM: Create opencode user
-        CI->>VM: Apply iptables rules
+        CI->>VM: Create opencode user (with sudo for setup)
+        CI->>VM: Apply per-IP iptables rules
         CI->>VM: Disable SSH
         CI->>VM: Install OpenCode CLI
         CI->>VM: Inject secrets and git config
         CI->>VM: Clone repository
+        CI->>VM: Revoke sudo from opencode user
         MP-->>LS: VM ready
         LS-->>User: Ready message
     end
@@ -133,13 +139,22 @@ sequenceDiagram
 
 * parses `--repo`, `--secrets`, `--network`, `--name`, and `--dry-run`
 * validates the secrets file and optional network whitelist
-* generates a merged cloud-init document from base provisioning plus security setup
+* reads `cloud-init/base.yaml` and `cloud-init/security.yaml` as source YAML rather than duplicating their content inline
+* parses the network whitelist YAML (default or custom) to extract allowed domains, ports, and DNS servers
+* resolves each whitelisted domain to IP addresses using `dig +short` on the host at launch time
+* generates per-IP iptables rules for each resolved address and port combination
+* generates DNS iptables rules from the whitelist's `dns_servers` field
+* appends a runcmd step that removes the `opencode` user from the `sudo` group after all setup commands complete
+* merges the above into a single cloud-init document
 * launches the VM through Multipass
 * reports the VM name and workspace path
 
 ==== config/network-whitelist.default.yaml
 
-Defines the default outbound allowlist for git providers, LLM APIs, package registries, and trusted DNS resolvers.
+Defines the default outbound allowlist for git providers, LLM APIs, package registries, and trusted DNS resolvers. The file contains three sections consumed by `launch.sh`:
+
+* `egress_allowed` -- list of domain/port pairs that `launch.sh` resolves to IPs for iptables rules
+* `dns_servers` -- list of resolver IPs used for iptables DNS allow rules and domain resolution at launch time
 
 === VM Components
 
@@ -149,12 +164,26 @@ The base layer installs packages from official Ubuntu repositories, creates the 
 
 ==== Security Provisioning (`cloud-init/security.yaml`)
 
-The security layer:
+The security layer provides the static runcmd skeleton:
 
-* applies a default-deny outbound iptables policy with loopback and resolver exceptions
-* permits outbound SSH/HTTPS traffic needed for git, APIs, and package downloads
+* applies a default-deny outbound iptables policy (OUTPUT, INPUT, FORWARD all DROP)
+* allows loopback traffic and established/related connections
 * disables SSH daemon access so the VM is entered through `multipass shell`
 * locks the OpenCode config directory after secret injection
+
+`launch.sh` injects additional runcmd entries generated at launch time:
+
+* per-IP iptables rules for each resolved whitelist domain and port (e.g., `iptables -A OUTPUT -p tcp -d 140.82.121.4 --dport 443 -j ACCEPT`)
+* DNS resolver rules derived from the whitelist's `dns_servers` field
+* a final step that revokes sudo privileges from the `opencode` user (`deluser opencode sudo`)
+
+This separation keeps `security.yaml` as a stable base while `launch.sh` generates the dynamic, environment-specific rules.
+
+==== Domain Resolution
+
+At launch time on the host, `launch.sh` resolves each domain in the network whitelist to one or more IP addresses using `dig +short` (falling back to `getent ahosts` when `dig` is unavailable). For each resolved IP and each allowed port, an iptables OUTPUT ACCEPT rule is generated and injected into the cloud-init runcmd section. If a domain cannot be resolved, `launch.sh` logs a warning and skips that domain.
+
+This approach has a known limitation: IP addresses may change after resolution. For long-lived VMs, the resolved IPs may become stale. This is an acceptable trade-off because the VMs are intended to be ephemeral.
 
 ==== OpenCode Installation
 
@@ -202,11 +231,11 @@ Requirements::
 
 Components:: `scripts/launch.sh`, `config/network-whitelist.default.yaml`, `cloud-init/security.yaml`
 Requirements::
-* DEV-012: iptables blocks outbound traffic except explicit allowlist rules.
-* DEV-013: GitHub and GitLab are reachable on ports 22 and 443.
-* DEV-014: OpenAI and OpenCode APIs are reachable on port 443.
-* DEV-015: package registries are reachable on port 443.
-* DEV-016: `--network` replaces the default allowlist with user-provided rules.
+* DEV-012: `launch.sh` resolves whitelist domains to IPs and generates per-IP iptables ACCEPT rules. All other outbound traffic is dropped by default.
+* DEV-013: GitHub and GitLab domains are resolved and allowed on ports 22 and 443.
+* DEV-014: OpenAI and OpenCode API domains are resolved and allowed on port 443.
+* DEV-015: package registry domains are resolved and allowed on port 443.
+* DEV-016: `--network` replaces the default allowlist including its domains, ports, and DNS servers. `launch.sh` reads `dns_servers` from the custom file and generates DNS iptables rules accordingly.
 * DEV-017: malformed network config aborts launch before VM creation.
 
 === US-005: Verify Supply Chain Integrity
@@ -217,6 +246,12 @@ Requirements::
 * DEV-019: Python package installation supports hash-verified requirements.
 * DEV-020: OpenCode installation validates the pinned checksum before install.
 * DEV-021: checksum mismatch aborts initialization.
+
+=== US-006: Harden Runtime Privileges
+
+Components:: `scripts/launch.sh`, `cloud-init/base.yaml`
+Requirements::
+* DEV-022: The final runcmd step generated by `launch.sh` runs `deluser opencode sudo` to remove the `opencode` user from the sudo group. The user retains sudo during cloud-init execution (needed for package installation, iptables, service management) but loses it before the VM is handed to the developer.
 
 == File Structure
 
@@ -230,7 +265,8 @@ multipass-devenv/
 │   └── security.yaml
 ├── scripts/
 │   ├── launch.sh
-│   └── inject-secrets.sh
+│   ├── inject-secrets.sh
+│   └── validate.sh
 └── templates/
     ├── opencode-config.yaml.j2
     └── requirements.pinned.txt.j2

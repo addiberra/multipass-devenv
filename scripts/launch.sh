@@ -3,8 +3,8 @@
 # Launch script for secure dev environment
 # Orchestrates VM creation with Multipass and cloud-init
 #
-# See docs/features/dev-env-setup/spec.yaml US-001, US-002, US-003, US-004, US-005
-# See docs/constraints.yaml C-001-C-019
+# See docs/features/dev-env-setup/spec.yaml US-001, US-002, US-003, US-004, US-005, US-006
+# See docs/constraints.yaml C-001 through C-019
 #
 # Usage:
 #   ./scripts/launch.sh --repo <git-url> --secrets <secrets-file>
@@ -25,6 +25,7 @@ NETWORK_FILE=""
 DRY_RUN=false
 DEFAULT_NETWORK="${PROJECT_ROOT}/config/network-whitelist.default.yaml"
 CLOUD_INIT_DIR="${PROJECT_ROOT}/cloud-init"
+# shellcheck disable=SC2034  # TEMPLATES_DIR used by inject-secrets.sh
 TEMPLATES_DIR="${PROJECT_ROOT}/templates"
 OPENCODE_VERSION="latest"
 OPENCODE_CHECKSUM=""  # Will be set to verify download integrity
@@ -113,7 +114,7 @@ validate_secrets_file() {
     
     local line_num=0
     while IFS= read -r line || [[ -n "$line" ]]; do
-        ((line_num += 1))
+        ((line_num++))
         # Skip comments and empty lines
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "${line// }" ]] && continue
@@ -179,143 +180,308 @@ if 'dns_servers' not in data:
     log_info "Network whitelist validated: $file"
 }
 
-# Generate cloud-init YAML by merging base + security + secrets
+# Parse DNS servers from the network whitelist YAML.
+# Outputs one IP per line.
+parse_dns_servers() {
+    local file="$1"
+    python3 -c "
+import yaml, sys
+data = yaml.safe_load(open('$file'))
+for s in data.get('dns_servers', []):
+    print(s)
+"
+}
+
+# Parse egress allowed entries from the network whitelist YAML.
+# Outputs lines in format: domain port
+parse_egress_entries() {
+    local file="$1"
+    python3 -c "
+import yaml, sys
+data = yaml.safe_load(open('$file'))
+for entry in data.get('egress_allowed', []):
+    domain = entry['domain']
+    for port in entry.get('ports', []):
+        print(f'{domain} {port}')
+"
+}
+
+# Resolve a domain to IP addresses using dig.
+# Uses the provided DNS server for resolution.
+# Outputs one IP per line. Returns empty if resolution fails.
+resolve_domain() {
+    local domain="$1"
+    local dns_server="${2:-8.8.8.8}"
+
+    if ! command -v dig &>/dev/null; then
+        log_warn "dig not available, falling back to getent for $domain"
+        getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u
+        return
+    fi
+
+    local ips
+    ips=$(dig +short "$domain" "@${dns_server}" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
+    if [[ -z "$ips" ]]; then
+        log_warn "Could not resolve $domain, skipping"
+        return
+    fi
+    echo "$ips"
+}
+
+# Generate iptables runcmd entries from the network whitelist.
+# Resolves domains to IPs and creates per-IP rules for each port.
+# Also generates DNS server rules from the whitelist's dns_servers field.
+generate_network_rules() {
+    local network_file="$1"
+    local rules=""
+
+    # Read DNS servers from the whitelist
+    local dns_servers
+    dns_servers=$(parse_dns_servers "$network_file")
+    local first_dns
+    first_dns=$(echo "$dns_servers" | head -1)
+
+    # Generate DNS iptables rules
+    while IFS= read -r dns_ip; do
+        [[ -z "$dns_ip" ]] && continue
+        rules+="  - iptables -A OUTPUT -p udp --dport 53 -d ${dns_ip} -j ACCEPT\n"
+        rules+="  - iptables -A OUTPUT -p tcp --dport 53 -d ${dns_ip} -j ACCEPT\n"
+    done <<< "$dns_servers"
+
+    # Resolve each domain and generate per-IP rules
+    local prev_domain=""
+    while IFS=' ' read -r domain port; do
+        [[ -z "$domain" ]] && continue
+        # Resolve domain (cache across ports for the same domain)
+        if [[ "$domain" != "$prev_domain" ]]; then
+            local resolved_ips
+            resolved_ips=$(resolve_domain "$domain" "$first_dns")
+            prev_domain="$domain"
+        fi
+        if [[ -z "$resolved_ips" ]]; then
+            continue
+        fi
+        # Generate a rule for each resolved IP
+        while IFS= read -r ip; do
+            [[ -z "$ip" ]] && continue
+            rules+="  - iptables -A OUTPUT -p tcp -d ${ip} --dport ${port} -j ACCEPT\n"
+        done <<< "$resolved_ips"
+    done < <(parse_egress_entries "$network_file")
+
+    echo -e "$rules"
+}
+
+# Extract a YAML list section from a cloud-init file.
+# Reads all lines belonging to the given top-level key (e.g., runcmd, packages).
+# Outputs the list items without the key header.
+extract_yaml_list() {
+    local file="$1"
+    local key="$2"
+    local in_section=false
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" =~ ^${key}: ]]; then
+            in_section=true
+            continue
+        fi
+        # A non-indented, non-comment, non-blank line ends the section
+        if $in_section && [[ "$line" =~ ^[^[:space:]#] ]]; then
+            break
+        fi
+        if $in_section; then
+            echo "$line"
+        fi
+    done < "$file"
+}
+
+# Extract non-list YAML sections (everything except known list keys).
+# This captures scalar keys like package_update, package_upgrade and
+# mapping keys like users.
+extract_yaml_scalars_and_mappings() {
+    local file="$1"
+    local skip_keys=("runcmd" "packages" "write_files" "bootcmd")
+    local in_list=false
+    local current_key=""
+
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        # Skip cloud-config header and comments at the top
+        [[ "$line" =~ ^#cloud-config ]] && continue
+        [[ "$line" =~ ^#  ]] && continue
+        [[ -z "$line" ]] && { $in_list || echo; continue; }
+
+        # Detect top-level keys
+        if [[ "$line" =~ ^([a-z_]+): ]]; then
+            current_key="${BASH_REMATCH[1]}"
+            in_list=false
+            for skip in "${skip_keys[@]}"; do
+                if [[ "$current_key" == "$skip" ]]; then
+                    in_list=true
+                    break
+                fi
+            done
+            $in_list && continue
+            echo "$line"
+            continue
+        fi
+
+        # Print continuation lines for non-skipped sections
+        $in_list || echo "$line"
+    done < "$file"
+}
+
+# Generate write_files entries for secrets injection
+generate_write_files() {
+    local secrets_file="$1"
+    local repo_url="$2"
+    local result=""
+
+    result+="write_files:\n"
+
+    # Parse secrets for OpenCode config
+    local api_key="" opencode_key="" git_name="" git_email=""
+    while IFS='=' read -r key value || [[ -n "$key" ]]; do
+        [[ "$key" =~ ^[[:space:]]*# ]] && continue
+        [[ -z "${key// }" ]] && continue
+        key=$(echo "$key" | xargs)
+        case "$key" in
+            OPENAI_API_KEY)  api_key="${value//\"/\\\"}" ;;
+            OPENCODE_API_KEY) opencode_key="${value//\"/\\\"}" ;;
+            GIT_USER_NAME)   git_name="${value//\"/\\\"}" ;;
+            GIT_USER_EMAIL)  git_email="${value//\"/\\\"}" ;;
+        esac
+    done < "$secrets_file"
+
+    # OpenCode config
+    result+="  - path: /home/opencode/.config/opencode/config.yaml\n"
+    result+="    owner: opencode:opencode\n"
+    result+="    permissions: '0600'\n"
+    result+="    content: |\n"
+    result+="      api_key: \"${api_key}\"\n"
+    if [[ -n "$opencode_key" ]]; then
+        result+="      opencode_api_key: \"${opencode_key}\"\n"
+    fi
+
+    # Git config
+    result+="  - path: /home/opencode/.gitconfig\n"
+    result+="    owner: opencode:opencode\n"
+    result+="    permissions: '0644'\n"
+    result+="    content: |\n"
+    result+="      [user]\n"
+    result+="          name = \"${git_name}\"\n"
+    result+="          email = \"${git_email}\"\n"
+
+    # SSH known_hosts (DEV-010)
+    result+="  - path: /home/opencode/.ssh/known_hosts\n"
+    result+="    owner: opencode:opencode\n"
+    result+="    permissions: '0644'\n"
+    result+="    content: |\n"
+    result+="      github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphnt+VTTvDP6mHBL9j1aNUkY4Ue1gvwnGLVlOhGeYrnZBkn48cTga1gQ0LyKDMTY1NuV3SpO/w7DAoH+UrF+0j5HSGldk2RKHFHJ9hL6S72y+Q+UNR3pJXSlp2L8ABGbhLaRL6fCJRLOJQReL/u1BhnLXtSjE2TVPVMBKF3P/v5rxYCRmkv1FR7F/hLWRiTcMnPnzB3j1WUmhKvP/iG+grsHhJAcCwpzK0QVpvz47DMFSZqIJb1WGUKm0K0sHuF3nrMZ/oU5cL0kkBklcHQEH/TdL4MYiyXpIN6rqYrRMdxAcMdX0DH6riP6HH0E8YXEfFB8BkDlxCH0pvDdKMJq/kMcEyS9FyDJM+M/N3PXf5eFUZ3/GZ3d/Z3JN0OSHgRf+5JB7+d5LBGmkPKFlI/w5HEW7i0sJB7+S+0gRnUWOK+AScW0DzVJjK5xmRAAERkGSrAfCGLNnMfBehBHGeJJL+KGZx5Q0cBekM=\n"
+    if [[ "$repo_url" == *"gitlab.com"* ]]; then
+        result+="      gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2bNKTBSpIYDEGk9KxsGh3mySTRgMtXL583qmBpzeQ+jqCMRgBqB98u3z++J1sKlXHWfM9dyhSevkMwSbhoR8XIq/HpRqgBNRp7WX1eQV4M8S4UZxfl/73a7a8L+N/J5eSBcF0H4O6oGbAyYF+CeZvPSTGAEkIRZ0X+cdiHlJNa1b5mD2xJBLcojMvJZR7LM2YN3RW1vx8zFJaPJqD+8+R7GjACmK8FP8rCRw9CprLBLm7btNjl84hX8Wf/qlaI2Q9g9N5XsUAgWCuFb9BLOvl/zjGLJtUODfY7q5GMSs+PuN2XPWKoJ+tB0O8r6BhAl5kro1L4S4cN8KOf\n"
+    fi
+
+    echo -e "$result"
+}
+
+# Generate cloud-init YAML by reading and merging base.yaml + security.yaml + secrets
 generate_cloud_init() {
     local secrets_file="$1"
     local network_file="$2"
     local repo_url="$3"
-    
-    # Start with base configuration
-    local cloud_init="#cloud-config\n"
-    cloud_init+="# Merged cloud-init configuration for secure dev environment\n"
-    cloud_init+="# Generated by launch.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)\n\n"
-    
-    # Merge base.yaml
-    if [[ -f "${CLOUD_INIT_DIR}/base.yaml" ]]; then
-        # Skip the #cloud-config line since we already have it
-        cloud_init+=$(sed '1,2d' "${CLOUD_INIT_DIR}/base.yaml")
-        cloud_init+="\n\n"
+
+    local base_file="${CLOUD_INIT_DIR}/base.yaml"
+    local security_file="${CLOUD_INIT_DIR}/security.yaml"
+
+    if [[ ! -f "$base_file" ]]; then
+        log_error "Missing cloud-init base config: $base_file"
+        exit 1
     fi
-    
-    # Add write_files for secrets and git config
-    cloud_init+="write_files:\n"
-    
-    # Parse secrets file and generate write_files entries
-    while IFS='=' read -r key value || [[ -n "$key" ]]; do
-        [[ "$key" =~ ^[[:space:]]*# ]] && continue
-        [[ -z "${key// }" ]] && continue
-        
-        key=$(echo "$key" | xargs)
-        value=$(echo "$value" | xargs)
-        
-        case "$key" in
-            OPENAI_API_KEY)
-                local escaped_value
-                escaped_value=$(echo "$value" | sed 's/"/\\"/g')
-                cloud_init+="  - path: /home/opencode/.config/opencode/config.yaml\n"
-                cloud_init+="    owner: opencode:opencode\n"
-                cloud_init+="    permissions: '0600'\n"
-                cloud_init+="    content: |\n"
-                cloud_init+="      api_key: \"${escaped_value}\"\n"
-                ;;
-            OPENCODE_API_KEY)
-                if [[ -n "$value" ]]; then
-                    local escaped_val
-                    escaped_val=$(echo "$value" | sed 's/"/\\"/g')
-                    cloud_init+="      opencode_api_key: \"${escaped_val}\"\n"
-                fi
-                ;;
-            GIT_USER_NAME)
-                local escaped_name
-                escaped_name=$(echo "$value" | sed 's/"/\\"/g')
-                cloud_init+="  - path: /home/opencode/.gitconfig\n"
-                cloud_init+="    owner: opencode:opencode\n"
-                cloud_init+="    permissions: '0644'\n"
-                cloud_init+="    content: |\n"
-                cloud_init+="      [user]\n"
-                cloud_init+="          name = \"${escaped_name}\"\n"
-                ;;
-            GIT_USER_EMAIL)
-                local escaped_email
-                escaped_email=$(echo "$value" | sed 's/"/\\"/g')
-                cloud_init+="          email = \"${escaped_email}\"\n"
-                ;;
-        esac
-    done < "$secrets_file"
-    
-    # Add SSH known_hosts for GitHub and GitLab (DEV-010)
-    cloud_init+="  - path: /home/opencode/.ssh/known_hosts\n"
-    cloud_init+="    owner: opencode:opencode\n"
-    cloud_init+="    permissions: '0644'\n"
-    cloud_init+="    content: |\n"
-    if [[ "$repo_url" == *"github.com"* ]]; then
-        cloud_init+="      github.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABgQCj7ndNxQowgcQnjshcLrqPEiiphrmQRtL5p/ZJlpW2d6Nv8H9k2UE6xZkYr0dFZWms2nUUloop1VBUhOHpN3P5WKzacjPBkSZBdu6sEHe5YTWmP4sJrkzVkWIJTKsPNJrkSHsbNWHYVdqVv/O1BnADLdCqk8UYki1uUqsch6gzqU8r3hncYaBei6KZHgpq8DZ2WYQ6BfT/TF5rFvz1TYyHIsnLsD5ux/RLmDE9oV+le7VK9NTsTvzwD0SC0g24n0pC3W+6K1KII8f8qEB6QV36drRY5e6tI6IifxtwPl+uRer2sKZEY6eImanXhNqPtDAFOkDgCDrl728A2PDLiRDoVWZw5qQfOeQmr2pCM0ZU08YXqem+Ng4cqdiJVcTsXvqR0r4qyNzwAL7BwzITuvwL36dKv6p5L1TfzH3F3YG8eN6lBE8mV6Ukp1BdeF3yGvK1f1y5MK1m5sXUTfD2ZfFuJVJNjo6Y8W7j/5h4d0nLp4kEKRLTRNvEnGM= github.com\n"
+    if [[ ! -f "$security_file" ]]; then
+        log_error "Missing cloud-init security config: $security_file"
+        exit 1
     fi
-    if [[ "$repo_url" == *"gitlab.com"* ]]; then
-        cloud_init+="      gitlab.com ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCsj2b2dK+9XQXhrKj1W5jniHq+J5m5piV7Z6w+5r5mZ5hi5Oi5VW5Li5X5K+5n5S5h5U5YW5F5K5XU5o5T5A5n5i5B5EW5bai5V5WE5b5k5J5M5U5o5K5n5S5YqMgl5J5r5H5g5Q5B5HWA5C5KU5BZa+qT5k5mmrtmlg5vfrLzPN5VB5B5r5D5Q5j5MY5g5CR5p5zS5yJA5j5GBMi5TSZ5Vi5gL5tJQp5fVRAL5C5H5dA5Q5mG5n5h59c5a+W5j5o5O5P5XhY5s5aTzMzma5oE5A5hBe5V5nW5X5peM5U5G/o5D5V5fD5t5A5VpDeN5nzpOp5CwXA5L5DH5sP5BY5uP5F5rHN5y5pBeqT5aPyJ5mtH5r5l5H5EwU5J5Gxs5V5PU5t5e5M5rv5iCF5p5CI5c5oGY5o5V5lE5gDYNpOWTCszl5y5Aio5E5H5ioGl5s5zy5Uq/5p5M5Y5yK5L5ewN5V5Y5N5n5iE5V5e5 (gitlab.com)\n"
+
+    local output="#cloud-config\n"
+    output+="# Merged cloud-init configuration for secure dev environment\n"
+    output+="# Generated by launch.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ)\n\n"
+
+    # --- Scalars and mappings from base.yaml (package_update, users, etc.) ---
+    output+="$(extract_yaml_scalars_and_mappings "$base_file")\n\n"
+
+    # --- Merged packages list ---
+    local base_packages security_packages
+    base_packages=$(extract_yaml_list "$base_file" "packages")
+    security_packages=$(extract_yaml_list "$security_file" "packages")
+    output+="packages:\n"
+    [[ -n "$base_packages" ]] && output+="${base_packages}\n"
+    [[ -n "$security_packages" && "$security_packages" != *"[]"* ]] && output+="${security_packages}\n"
+    output+="\n"
+
+    # --- write_files from secrets injection ---
+    output+="$(generate_write_files "$secrets_file" "$repo_url")\n"
+
+    # --- Merged runcmd ---
+    local base_runcmd security_runcmd
+    base_runcmd=$(extract_yaml_list "$base_file" "runcmd")
+    security_runcmd=$(extract_yaml_list "$security_file" "runcmd")
+
+    output+="runcmd:\n"
+    output+="  - echo 'Starting cloud-init configuration...'\n"
+
+    # Base runcmd (directory creation, package cleanup)
+    [[ -n "$base_runcmd" ]] && output+="${base_runcmd}\n"
+
+    # Security runcmd up to the PLACEHOLDER marker (default-deny, loopback, established)
+    # Then inject dynamic rules, then continue with the rest (log, save, SSH disable, lock)
+    local before_placeholder="" after_placeholder="" in_after=false
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ "$line" == *"PLACEHOLDER"* ]]; then
+            in_after=true
+            continue
+        fi
+        if $in_after; then
+            after_placeholder+="${line}\n"
+        else
+            before_placeholder+="${line}\n"
+        fi
+    done <<< "$security_runcmd"
+
+    # Static security rules (default-deny, loopback, established)
+    [[ -n "$before_placeholder" ]] && output+="${before_placeholder}"
+
+    # Generate DNS and per-IP domain rules from the network whitelist
+    output+="  # DNS and domain rules (generated from $network_file)\n"
+    local network_rules
+    network_rules=$(generate_network_rules "$network_file")
+    if [[ -n "$network_rules" ]]; then
+        output+="$network_rules"
+    else
+        log_warn "No network rules generated from whitelist"
     fi
-    
-    cloud_init+="\n"
-    
-    # Add runcmd for security setup
-    cloud_init+="\nruncmd:\n"
-    cloud_init+="  - echo 'Starting security configuration...'\n"
-    
-    # Enable and configure iptables
-    cloud_init+="  - iptables -P OUTPUT DROP\n"
-    cloud_init+="  - iptables -P INPUT DROP\n"
-    cloud_init+="  - iptables -P FORWARD DROP\n"
-    cloud_init+="  - iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT\n"
-    cloud_init+="  - iptables -A INPUT -i lo -j ACCEPT\n"
-    cloud_init+="  - iptables -A OUTPUT -o lo -j ACCEPT\n"
-    
-    # Read network whitelist and generate iptables rules
-    # DNS servers
-    cloud_init+="  - iptables -A OUTPUT -p udp --dport 53 -d 8.8.8.8 -j ACCEPT\n"
-    cloud_init+="  - iptables -A OUTPUT -p udp --dport 53 -d 1.1.1.1 -j ACCEPT\n"
-    cloud_init+="  - iptables -A OUTPUT -p tcp --dport 53 -d 8.8.8.8 -j ACCEPT\n"
-    cloud_init+="  - iptables -A OUTPUT -p tcp --dport 53 -d 1.1.1.1 -j ACCEPT\n"
-    
-    # Allow outbound on allowed ports (22, 443 for git, APIs, registries)
-    cloud_init+="  - iptables -A OUTPUT -p tcp --dport 22 -j ACCEPT\n"
-    cloud_init+="  - iptables -A OUTPUT -p tcp --dport 443 -j ACCEPT\n"
-    
-    # Log dropped packets
-    cloud_init+="  - iptables -A OUTPUT -j LOG --log-prefix 'IPTABLES_DROP: ' --log-level 4\n"
-    cloud_init+="  - iptables -A INPUT -j LOG --log-prefix 'IPTABLES_DROP: ' --log-level 4\n"
-    cloud_init+="  - iptables-save > /etc/iptables/rules.v4\n"
-    
-    # Disable SSH
-    cloud_init+="  - systemctl stop sshd || true\n"
-    cloud_init+="  - systemctl disable sshd || true\n"
-    
+
+    # Remaining security rules (log, save, SSH disable, config lock)
+    [[ -n "$after_placeholder" ]] && output+="${after_placeholder}"
+
     # Clone repository
-    local repo_dir="/home/opencode/workspace/$(basename "$repo_url" .git 2>/dev/null || basename "$repo_url")"
-    cloud_init+="  - cd /home/opencode/workspace && git clone \"$repo_url\" || echo 'Clone failed'\n"
-    cloud_init+="  - chown -R opencode:opencode /home/opencode/workspace\n"
-    
-    # Install OpenCode CLI with checksum verification (DEV-005, DEV-006, DEV-027, DEV-028)
-    # Note: Replace OPENCODE_CHECKSUM with actual SHA256 of the release binary
-    # The binary URL follows the pattern: https://github.com/anomalyco/opencode/releases/download/vX.Y.Z/opencode-linux-amd64
-    # TODO: Set OPENCODE_CHECKSUM to the actual SHA256 hash of the OpenCode binary
+    output+="  - cd /home/opencode/workspace && git clone \"$repo_url\" || echo 'Clone failed'\n"
+    output+="  - chown -R opencode:opencode /home/opencode/workspace\n"
+
+    # Install OpenCode CLI (DEV-005, DEV-006, DEV-020, DEV-021)
     local opencode_url="${OPENCODE_BASE_URL}/download/${OPENCODE_VERSION}/opencode-linux-amd64"
-    local opencode_checksum="${OPENCODE_CHECKSUM:-PLACEHOLDER_UPDATE_WITH_ACTUAL_CHECKSUM}"
-    
-    cloud_init+="  - echo 'Installing OpenCode CLI...'\n"
-    cloud_init+="  - cd /tmp\n"
-    cloud_init+="  - wget -q \"$opencode_url\" -O opencode-binary || echo 'OpenCode download failed - continuing without it'\n"
-    # Checksum verification would go here when actual checksum is known
-    # cloud_init+="  - echo '${opencode_checksum}  opencode-binary' | sha256sum -c || (echo 'Checksum mismatch - aborting'; exit 1)\n"
-    cloud_init+="  - if [ -f opencode-binary ]; then chmod +x opencode-binary && mv opencode-binary /usr/local/bin/opencode; fi\n"
-    cloud_init+="  - opencode --version || echo 'OpenCode not installed - download may have failed'\n"
-    
-    # Lock config directory
-    cloud_init+="  - chattr +i /home/opencode/.config/opencode 2>/dev/null || true\n"
-    
-    # Verify setup
-    cloud_init+="  - echo 'Security configuration complete'\n"
-    
-    echo -e "$cloud_init"
+    output+="  - echo 'Installing OpenCode CLI...'\n"
+    output+="  - cd /tmp\n"
+    output+="  - wget -q \"$opencode_url\" -O opencode-binary || echo 'OpenCode download failed - continuing without it'\n"
+    if [[ -n "${OPENCODE_CHECKSUM:-}" ]]; then
+        output+="  - echo '${OPENCODE_CHECKSUM}  opencode-binary' | sha256sum -c || (echo 'Checksum mismatch - aborting'; exit 1)\n"
+    fi
+    output+="  - if [ -f opencode-binary ]; then chmod +x opencode-binary && mv opencode-binary /usr/local/bin/opencode; fi\n"
+    output+="  - opencode --version || echo 'OpenCode not installed - download may have failed'\n"
+
+    # Revoke sudo from opencode user after all setup is complete (DEV-022)
+    output+="  - deluser opencode sudo || true\n"
+    output+="  - echo 'Cloud-init configuration complete'\n"
+
+    echo -e "$output"
 }
 
 # Launch VM with Multipass

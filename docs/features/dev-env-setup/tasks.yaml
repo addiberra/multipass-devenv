@@ -2,103 +2,104 @@
 
 schema_version: "3.0.0"
 feature: dev-env-setup
-version: "1.1.0"
+version: "2.0.0"
 status: Implemented
-source_design_version: "1.1.0"
-source_spec_version: "1.1.0"
-last_updated: "2026-03-27"
-
+source_design_version: "1.2.0"
+source_spec_version: "1.2.0"
+last_updated: "2026-03-28"
 overview: >-
-  Simplified implementation plan for the Multipass dev environment. The feature
-  now focuses on VM launch, secret injection, repo cloning, network controls,
-  and supply-chain safeguards using VM isolation and user-managed lifecycle.
+  Resolve review findings for the Multipass dev environment. Six tasks address
+  domain-level egress enforcement, sudo revocation, cloud-init generation
+  refactoring, shellcheck validation, and documentation cleanup. TASK-001 and
+  TASK-002 are parallel roots for implementation work. TASK-005 and TASK-006
+  are independent roots for quality and documentation.
 
 tasks:
   - id: TASK-001
-    title: Create default network whitelist configuration
+    title: Refactor security.yaml to static base skeleton
     depends_on: []
-    components: [config/network-whitelist.default.yaml]
+    components: [cloud-init/security.yaml]
     stories: [US-004]
-    requirements: [DEV-012, DEV-013, DEV-014, DEV-015]
+    requirements: [DEV-012]
     done: true
     description: >-
-      Define the default egress allowlist for git providers, LLM APIs,
-      package registries, and trusted DNS resolvers.
+      Remove the broad port 22/443 ACCEPT rules and hardcoded DNS resolver
+      rules from security.yaml. Retain only the static skeleton: default-deny
+      policies (OUTPUT, INPUT, FORWARD DROP), loopback allow, established/related
+      allow, SSH daemon disable, config directory lock, iptables-save, and log
+      rules. Domain-specific and DNS rules will be generated dynamically by
+      launch.sh.
 
   - id: TASK-002
-    title: Create OpenCode config template
+    title: Refactor launch.sh to read and merge actual YAML files
     depends_on: []
-    components: [templates/opencode-config.yaml.j2]
-    stories: [US-002]
-    requirements: [DEV-007]
+    components: [scripts/launch.sh]
+    stories: [US-001, US-002, US-003, US-004, US-005]
+    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-018, DEV-019, DEV-020, DEV-021]
     done: true
     description: >-
-      Create the template used to render OpenCode configuration with injected
-      secrets at VM launch time.
+      Replace the inline cloud-init string construction in generate_cloud_init()
+      with logic that reads cloud-init/base.yaml and cloud-init/security.yaml
+      as source files. Merge their contents programmatically (concatenate
+      packages lists, combine runcmd lists, merge write_files) instead of
+      re-encoding rules in bash strings. The secrets injection from
+      inject-secrets.sh is merged into the write_files section. Also normalize
+      ((line_num++)) to be consistent throughout the script.
 
   - id: TASK-003
-    title: Create base cloud-init configuration
-    depends_on: [TASK-001]
-    components: [cloud-init/base.yaml]
-    stories: [US-001, US-005]
-    requirements: [DEV-001, DEV-002, DEV-018]
+    title: Implement domain resolution and per-IP iptables generation
+    depends_on: [TASK-001, TASK-002]
+    components: [scripts/launch.sh, config/network-whitelist.default.yaml]
+    stories: [US-004]
+    requirements: [DEV-012, DEV-013, DEV-014, DEV-015, DEV-016, DEV-017]
     done: true
     description: >-
-      Install base packages from official Ubuntu repositories, create the
-      non-root opencode user, and prepare workspace and configuration directories.
+      Add whitelist parsing and domain resolution to launch.sh. Parse the
+      network whitelist YAML (default or --network custom) to extract allowed
+      domains, ports, and dns_servers. For each domain, resolve to IP addresses
+      using dig +short with the whitelist's dns_servers. Generate per-IP
+      iptables ACCEPT rules for each resolved IP and port combination. Generate
+      DNS iptables rules from the dns_servers field. Inject these rules into
+      the merged cloud-init runcmd section before the iptables-save step.
+      Log a warning and skip domains that fail to resolve.
 
   - id: TASK-004
-    title: Create security cloud-init configuration
-    depends_on: [TASK-001, TASK-002, TASK-003]
-    components: [cloud-init/security.yaml]
-    stories: [US-002, US-003, US-004, US-005]
-    requirements: [DEV-005, DEV-006, DEV-007, DEV-008, DEV-010, DEV-011, DEV-012, DEV-017, DEV-019, DEV-020, DEV-021]
+    title: Implement sudo revocation after VM initialization
+    depends_on: [TASK-002]
+    components: [scripts/launch.sh, cloud-init/base.yaml]
+    stories: [US-006]
+    requirements: [DEV-022]
     done: true
     description: >-
-      Configure outbound network restrictions, disable SSH access, lock the
-      OpenCode config directory after setup, and install OpenCode with checksum
-      verification.
+      Append a final runcmd entry in the generated cloud-init that runs
+      deluser opencode sudo to remove the opencode user from the sudo group
+      after all setup commands complete. This must be the last runcmd entry
+      so that package installation, iptables configuration, and service
+      management can still use sudo during cloud-init execution.
 
   - id: TASK-005
-    title: Create launch script
-    depends_on: [TASK-003, TASK-004]
-    components: [scripts/launch.sh]
-    stories: [US-001, US-002, US-003, US-004]
-    requirements: [DEV-001, DEV-003, DEV-004, DEV-009, DEV-016, DEV-017]
+    title: Add shellcheck validation script
+    depends_on: []
+    components: [scripts/validate.sh]
+    stories: [US-001]
+    requirements: [DEV-001, DEV-003]
     done: true
     description: >-
-      Create the script that validates inputs, renders cloud-init, launches the
-      VM, and reports how to connect to the workspace.
+      Create scripts/validate.sh that runs shellcheck on launch.sh and
+      inject-secrets.sh. Exit non-zero if any warnings or errors are found.
+      This provides a basic automated quality check for the shell scripts.
 
   - id: TASK-006
-    title: Create secrets injection helper script
-    depends_on: [TASK-002]
-    components: [scripts/inject-secrets.sh]
-    stories: [US-002]
-    requirements: [DEV-007, DEV-008]
-    done: true
-    description: >-
-      Create the helper that transforms secrets.env content into cloud-init-safe
-      configuration snippets.
-
-  - id: TASK-007
-    title: Create Python requirements template with hash verification
+    title: Fix constraint references and cleanup stale documentation
     depends_on: []
-    components: [templates/requirements.pinned.txt.j2]
-    stories: [US-005]
-    requirements: [DEV-019]
+    components: [cloud-init/base.yaml, cloud-init/security.yaml, scripts/launch.sh, scripts/inject-secrets.sh, README.md]
+    stories: [US-001, US-004]
+    requirements: [DEV-001, DEV-012]
     done: true
     description: >-
-      Document and template a hash-verified Python requirements file for
-      reproducible and auditable package installation.
-
-  - id: TASK-008
-    title: Integrate components and document usage
-    depends_on: [TASK-005, TASK-006, TASK-007]
-    components: [scripts/launch.sh, scripts/inject-secrets.sh, README.md]
-    stories: [US-001, US-002, US-003, US-004, US-005]
-    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-015, DEV-016, DEV-017, DEV-018, DEV-019, DEV-020, DEV-021]
-    done: true
-    description: >-
-      Verify the launch flow end to end and document the simplified workflow,
-      including connection, network customization, and verification steps.
+      Audit and fix all constraint cross-references in file headers (e.g.,
+      base.yaml references C-010-C-019 which is inconsistent). Normalize
+      ((line_num++)) usage in inject-secrets.sh. Remove any remaining
+      references to teardown.sh or the teardown workflow from README.md
+      and other files. Ensure documentation matches the current implementation
+      after all other tasks are complete.

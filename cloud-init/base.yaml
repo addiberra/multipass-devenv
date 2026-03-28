@@ -2,8 +2,8 @@
 # Base cloud-init configuration for secure dev environment
 # Installs packages and creates non-root user
 #
-# See docs/features/dev-env-setup/spec.yaml US-001, US-007
-# See docs/constraints.yaml C-005, C-010-C-019
+# See docs/features/dev-env-setup/spec.yaml US-001, US-005
+# See docs/constraints.yaml C-005, C-010, C-014
 #
 # This file is merged with security.yaml by launch.sh
 
@@ -57,7 +57,7 @@ users:
 # === Directory Structure ===
 # Set up workspace and config directories
 runcmd:
-  # Create workspace directory (DEV-018)
+  # Create workspace directory
   - mkdir -p /home/opencode/workspace
   - chown opencode:opencode /home/opencode/workspace
   - chmod 0755 /home/opencode/workspace
@@ -72,7 +72,7 @@ runcmd:
   - chown opencode:opencode /home/opencode/.ssh
   - chmod 0700 /home/opencode/.ssh
 
-  # Ensure package installation completed (DEV-025)
+  # Ensure package installation completed
   - apt-get clean
   - dpkg --configure -a
 

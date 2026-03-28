@@ -1,6 +1,6 @@
 = System Architecture
-:version: 1.1.0
-:last-updated: 2026-03-27
+:version: 1.2.0
+:last-updated: 2026-03-28
 :toc:
 
 == Feature Design Sources
@@ -9,7 +9,7 @@
 |===
 | Feature | Design Version
 
-| dev-env-setup | 1.1.0
+| dev-env-setup | 1.2.0
 |===
 
 == Overview
@@ -45,7 +45,7 @@ C4Container
   Person(developer, "Developer", "Host machine user")
 
   System_Boundary(host, "Host Machine") {
-    Container(launch_script, "launch.sh", "Bash", "Validates inputs, renders cloud-init, launches VM")
+    Container(launch_script, "launch.sh", "Bash", "Validates inputs, resolves whitelist domains, renders cloud-init, launches VM")
     Container(secrets_file, "secrets.env", "File", "Developer-provided API keys and git identity")
     Container(network_file, "network-whitelist.yaml", "YAML", "Optional network overrides")
   }
@@ -172,12 +172,16 @@ The security model depends on the Multipass VM boundary, not on in-guest filesys
 
 === Network Egress Controls
 
-iptables applies a default-deny outbound policy and permits only:
+iptables applies a default-deny outbound policy. At launch time, `launch.sh` resolves each whitelisted domain to IP addresses using `dig` and generates per-IP iptables ACCEPT rules. This enforces domain-level filtering rather than broad port-level rules. DNS servers are read from the whitelist configuration file.
+
+Default allowlist:
 
 * GitHub and GitLab on ports 22 and 443
 * OpenAI and OpenCode APIs on port 443
-* Package registries such as PyPI, npm, and crates.io on port 443
-* Trusted DNS resolvers on port 53
+* Package registries (PyPI, npm, crates.io) on port 443
+* Trusted DNS resolvers from the whitelist's `dns_servers` field on port 53
+
+The developer may supply a custom whitelist via `--network` to override both domains and DNS servers.
 
 === Secret Injection Flow
 
@@ -188,7 +192,7 @@ iptables applies a default-deny outbound policy and permits only:
 
 === Access Model
 
-The VM is entered through `multipass shell`. SSH is disabled during provisioning. The `opencode` user is the default execution identity for agent tooling.
+The VM is entered through `multipass shell`. SSH is disabled during provisioning. The `opencode` user is the default execution identity for agent tooling. Administrative privileges (sudo) are revoked from the `opencode` user as the final provisioning step, preventing a compromised agent from escalating privileges to bypass firewall rules or unlock configuration files.
 
 == Cross-Cutting Concerns
 
