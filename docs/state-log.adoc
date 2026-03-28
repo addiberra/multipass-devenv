@@ -1,5 +1,19 @@
 = State Transition Log
-:last-updated: 2026-03-27
+:last-updated: 2026-03-28
+
+== TRANSITION-004
+:date: 2026-03-28
+:intent: Simplify network filtering — replace domain-level iptables with basic UFW port rules
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (simplified)
+:desired-state: Network egress controlled by simple UFW port-level rules (allow 443, 22, 53) instead of domain-resolution iptables
+:prior-state: Domain-level egress filtering via iptables with per-IP rules resolved at launch time, configurable whitelist YAML, DNS restriction
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v2.0.0), docs/features/dev-env-setup/design.adoc (v2.0.0), docs/features/dev-env-setup/tasks.yaml (v3.0.0), docs/constraints.yaml (v1.0.0), docs/architecture.adoc (v2.0.0), cloud-init/security.yaml, cloud-init/base.yaml, scripts/launch.sh, README.md, config/network-whitelist.default.yaml (deleted)
 
 == TRANSITION-003
 :date: 2026-03-27

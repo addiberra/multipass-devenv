@@ -1,6 +1,6 @@
 = Design: Dev Environment Setup
-:version: 1.2.0
-:source-spec-version: 1.2.0
+:version: 2.0.0
+:source-spec-version: 2.0.0
 :status: Current
 :last-updated: 2026-03-28
 :feature: dev-env-setup
@@ -14,10 +14,9 @@ Key security principles:
 
 * **Kernel isolation**: Full VM virtualization separates agent execution from the host kernel.
 * **No host mounts**: Repositories are cloned inside the VM instead of mounted from the host.
-* **Network egress controls**: iptables applies a default-deny outbound policy with a small allowlist.
+* **Network egress controls**: UFW applies a default-deny outbound policy with port-level allow rules for essential traffic (443, 22, 53).
 * **Secret injection**: Credentials are written into the VM by cloud-init instead of inherited from the host environment.
 * **Non-root execution**: OpenCode runs as the `opencode` user with no administrative privileges.
-* **Domain-level filtering**: Whitelist domains are resolved to IP addresses at launch time for iptables enforcement.
 
 == Decisions and Constraints
 
@@ -26,13 +25,12 @@ Key security principles:
 Relevant constraints from `docs/constraints.yaml`:
 
 * C-001: No host directory mounts
-* C-002: Network egress blocked except whitelisted domains
+* C-002: Network egress restricted to essential ports via UFW
 * C-003: Secret injection via cloud-init write_files
 * C-004: SSH disabled
 * C-005: Non-root user execution
 * C-008: No host credential exposure
 * C-010-C-016: Supply chain integrity controls
-* C-017-C-019: DNS and network restrictions
 
 == System Design
 
@@ -44,7 +42,6 @@ flowchart LR
     subgraph Host["Host Machine"]
         LS[launch.sh]
         ENV[secrets.env]
-        NWF[network-whitelist.yaml]
     end
 
     subgraph Multipass["Multipass Daemon"]
@@ -56,13 +53,13 @@ flowchart LR
         subgraph Init["cloud-init"]
             PKG[Package Install]
             USER[opencode user]
-            SEC[Network Hardening]
+            UFW_INIT[UFW Setup]
             OPENCODE[OpenCode CLI]
         end
 
         subgraph Runtime["Runtime"]
             WS[/home/opencode/workspace/]
-            IPT[iptables rules]
+            UFW_RT[UFW rules]
             GIT[git]
             PY[Python]
             NPM[Node.js]
@@ -76,20 +73,19 @@ flowchart LR
     end
 
     LS -->|reads| ENV
-    LS -->|--network| NWF
     LS -->|invokes| CMD
     CMD -->|cloud-init| Init
     ENV -->|secrets| Init
 
     Init --> Runtime
     Runtime --> WS
-    Runtime --> IPT
+    Runtime --> UFW_RT
 
     SHELL -->|interactive| WS
 
-    IPT -->|whitelisted| GH
-    IPT -->|whitelisted| LLM
-    IPT -->|whitelisted| PKGREG
+    UFW_RT -->|port 22, 443| GH
+    UFW_RT -->|port 443| LLM
+    UFW_RT -->|port 443| PKGREG
 ----
 
 === Launch Flow
@@ -105,22 +101,19 @@ sequenceDiagram
 
     User->>LS: ./launch.sh --repo URL --secrets file
     LS->>LS: Parse arguments
-    LS->>LS: Validate secrets and network config
-    LS->>LS: Parse whitelist YAML (domains, ports, DNS servers)
-    LS->>LS: Resolve whitelist domains to IPs via dig
+    LS->>LS: Validate secrets file
 
     alt --dry-run
         LS-->>User: Display generated config only
     else normal launch
         LS->>LS: Read base.yaml and security.yaml
-        LS->>LS: Generate per-IP iptables rules from resolved addresses
         LS->>LS: Merge into single cloud-init document
         LS->>MP: multipass launch --cloud-init
         MP->>VM: Create VM
         VM->>CI: Run cloud-init
-        CI->>VM: Install packages
+        CI->>VM: Install packages (including ufw)
         CI->>VM: Create opencode user (with sudo for setup)
-        CI->>VM: Apply per-IP iptables rules
+        CI->>VM: Configure UFW (deny all, allow 443, 22, 53)
         CI->>VM: Disable SSH
         CI->>VM: Install OpenCode CLI
         CI->>VM: Inject secrets and git config
@@ -137,24 +130,13 @@ sequenceDiagram
 
 `scripts/launch.sh` is the only project-managed entrypoint. It:
 
-* parses `--repo`, `--secrets`, `--network`, `--name`, and `--dry-run`
-* validates the secrets file and optional network whitelist
+* parses `--repo`, `--secrets`, `--name`, and `--dry-run`
+* validates the secrets file
 * reads `cloud-init/base.yaml` and `cloud-init/security.yaml` as source YAML rather than duplicating their content inline
-* parses the network whitelist YAML (default or custom) to extract allowed domains, ports, and DNS servers
-* resolves each whitelisted domain to IP addresses using `dig +short` on the host at launch time
-* generates per-IP iptables rules for each resolved address and port combination
-* generates DNS iptables rules from the whitelist's `dns_servers` field
 * appends a runcmd step that removes the `opencode` user from the `sudo` group after all setup commands complete
 * merges the above into a single cloud-init document
 * launches the VM through Multipass
 * reports the VM name and workspace path
-
-==== config/network-whitelist.default.yaml
-
-Defines the default outbound allowlist for git providers, LLM APIs, package registries, and trusted DNS resolvers. The file contains three sections consumed by `launch.sh`:
-
-* `egress_allowed` -- list of domain/port pairs that `launch.sh` resolves to IPs for iptables rules
-* `dns_servers` -- list of resolver IPs used for iptables DNS allow rules and domain resolution at launch time
 
 === VM Components
 
@@ -164,26 +146,17 @@ The base layer installs packages from official Ubuntu repositories, creates the 
 
 ==== Security Provisioning (`cloud-init/security.yaml`)
 
-The security layer provides the static runcmd skeleton:
+The security layer configures UFW and hardens the VM:
 
-* applies a default-deny outbound iptables policy (OUTPUT, INPUT, FORWARD all DROP)
-* allows loopback traffic and established/related connections
+* sets UFW default policy to deny all outgoing and incoming traffic
+* allows outbound port 443/tcp (HTTPS -- APIs, package registries, git over HTTPS)
+* allows outbound port 22/tcp (SSH -- git clone/push)
+* allows outbound port 53 (DNS resolution)
+* enables UFW
 * disables SSH daemon access so the VM is entered through `multipass shell`
 * locks the OpenCode config directory after secret injection
 
-`launch.sh` injects additional runcmd entries generated at launch time:
-
-* per-IP iptables rules for each resolved whitelist domain and port (e.g., `iptables -A OUTPUT -p tcp -d 140.82.121.4 --dport 443 -j ACCEPT`)
-* DNS resolver rules derived from the whitelist's `dns_servers` field
-* a final step that revokes sudo privileges from the `opencode` user (`deluser opencode sudo`)
-
-This separation keeps `security.yaml` as a stable base while `launch.sh` generates the dynamic, environment-specific rules.
-
-==== Domain Resolution
-
-At launch time on the host, `launch.sh` resolves each domain in the network whitelist to one or more IP addresses using `dig +short` (falling back to `getent ahosts` when `dig` is unavailable). For each resolved IP and each allowed port, an iptables OUTPUT ACCEPT rule is generated and injected into the cloud-init runcmd section. If a domain cannot be resolved, `launch.sh` logs a warning and skips that domain.
-
-This approach has a known limitation: IP addresses may change after resolution. For long-lived VMs, the resolved IPs may become stale. This is an acceptable trade-off because the VMs are intended to be ephemeral.
+`launch.sh` appends a final runcmd step that revokes sudo privileges from the `opencode` user (`deluser opencode sudo`).
 
 ==== OpenCode Installation
 
@@ -229,14 +202,12 @@ Requirements::
 
 === US-004: Restrict Network Access
 
-Components:: `scripts/launch.sh`, `config/network-whitelist.default.yaml`, `cloud-init/security.yaml`
+Components:: `cloud-init/security.yaml`
 Requirements::
-* DEV-012: `launch.sh` resolves whitelist domains to IPs and generates per-IP iptables ACCEPT rules. All other outbound traffic is dropped by default.
-* DEV-013: GitHub and GitLab domains are resolved and allowed on ports 22 and 443.
-* DEV-014: OpenAI and OpenCode API domains are resolved and allowed on port 443.
-* DEV-015: package registry domains are resolved and allowed on port 443.
-* DEV-016: `--network` replaces the default allowlist including its domains, ports, and DNS servers. `launch.sh` reads `dns_servers` from the custom file and generates DNS iptables rules accordingly.
-* DEV-017: malformed network config aborts launch before VM creation.
+* DEV-012: `security.yaml` runcmd configures UFW to deny all outbound and inbound traffic by default.
+* DEV-013: UFW rule allows outbound port 22/tcp for SSH git operations.
+* DEV-014: UFW rule allows outbound port 443/tcp for HTTPS (APIs, registries, git).
+* DEV-015: UFW rule allows outbound port 53 for DNS resolution.
 
 === US-005: Verify Supply Chain Integrity
 
@@ -251,15 +222,13 @@ Requirements::
 
 Components:: `scripts/launch.sh`, `cloud-init/base.yaml`
 Requirements::
-* DEV-022: The final runcmd step generated by `launch.sh` runs `deluser opencode sudo` to remove the `opencode` user from the sudo group. The user retains sudo during cloud-init execution (needed for package installation, iptables, service management) but loses it before the VM is handed to the developer.
+* DEV-022: The final runcmd step generated by `launch.sh` runs `deluser opencode sudo` to remove the `opencode` user from the sudo group. The user retains sudo during cloud-init execution (needed for package installation, UFW, service management) but loses it before the VM is handed to the developer.
 
 == File Structure
 
 [source]
 ----
 multipass-devenv/
-├── config/
-│   └── network-whitelist.default.yaml
 ├── cloud-init/
 │   ├── base.yaml
 │   └── security.yaml

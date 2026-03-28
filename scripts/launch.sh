@@ -4,11 +4,10 @@
 # Orchestrates VM creation with Multipass and cloud-init
 #
 # See docs/features/dev-env-setup/spec.yaml US-001, US-002, US-003, US-004, US-005, US-006
-# See docs/constraints.yaml C-001 through C-019
+# See docs/constraints.yaml C-001 through C-016
 #
 # Usage:
 #   ./scripts/launch.sh --repo <git-url> --secrets <secrets-file>
-#   ./scripts/launch.sh --repo <git-url> --secrets <secrets-file> --network <whitelist.yaml>
 #   ./scripts/launch.sh --dry-run --repo <git-url> --secrets <secrets-file>
 
 set -euo pipefail
@@ -21,9 +20,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 VM_NAME=""
 REPO_URL=""
 SECRETS_FILE=""
-NETWORK_FILE=""
 DRY_RUN=false
-DEFAULT_NETWORK="${PROJECT_ROOT}/config/network-whitelist.default.yaml"
 CLOUD_INIT_DIR="${PROJECT_ROOT}/cloud-init"
 # shellcheck disable=SC2034  # TEMPLATES_DIR used by inject-secrets.sh
 TEMPLATES_DIR="${PROJECT_ROOT}/templates"
@@ -44,7 +41,6 @@ Required:
 
 Optional:
   --name <name>          VM name (default: auto-generated from repo)
-  --network <file>       Custom network whitelist YAML (default: config/network-whitelist.default.yaml)
   --dry-run              Show configuration without creating VM
   --help                 Show this help message
 
@@ -62,7 +58,7 @@ Secrets file format (secrets.env):
 Security notes:
   - Secrets are injected via cloud-init, not environment variables
   - SSH access is disabled; use 'multipass shell <name>' instead
-  - Network egress is restricted to whitelisted domains only
+  - Network egress is restricted via UFW (ports 443, 22, 53 only)
 EOF
 }
 
@@ -97,7 +93,7 @@ generate_vm_name() {
 # Validate secrets file exists and has proper format
 validate_secrets_file() {
     local file="$1"
-    
+
     if [[ ! -f "$file" ]]; then
         log_error "Secrets file not found: $file"
         log_info "Create a secrets.env file with the following format:"
@@ -106,19 +102,19 @@ validate_secrets_file() {
         log_info "  GIT_USER_EMAIL=your@email.com"
         exit 1
     fi
-    
+
     if [[ ! -r "$file" ]]; then
         log_error "Cannot read secrets file: $file"
         exit 1
     fi
-    
+
     local line_num=0
     while IFS= read -r line || [[ -n "$line" ]]; do
         ((line_num++))
         # Skip comments and empty lines
         [[ "$line" =~ ^[[:space:]]*# ]] && continue
         [[ -z "${line// }" ]] && continue
-        
+
         # Check for valid KEY=value format
         if [[ ! "$line" =~ ^[A-Za-z_][A-Za-z0-9_]*= ]]; then
             log_error "Invalid format at line $line_num in $file"
@@ -126,7 +122,7 @@ validate_secrets_file() {
             exit 1
         fi
     done < "$file"
-    
+
     # Check for required keys
     if ! grep -q "^OPENAI_API_KEY=" "$file" 2>/dev/null; then
         log_error "OPENAI_API_KEY is required in secrets file"
@@ -140,135 +136,8 @@ validate_secrets_file() {
         log_error "GIT_USER_EMAIL is required in secrets file"
         exit 1
     fi
-    
+
     log_info "Secrets file validated: $file"
-}
-
-# Validate network whitelist YAML file
-validate_network_file() {
-    local file="$1"
-    
-    if [[ ! -f "$file" ]]; then
-        log_error "Network whitelist file not found: $file"
-        exit 1
-    fi
-    
-    if ! command -v python3 &>/dev/null; then
-        log_warn "Python3 not available, skipping YAML validation"
-        return 0
-    fi
-    
-    # Validate YAML syntax
-    if ! python3 -c "import yaml; yaml.safe_load(open('$file'))" 2>/dev/null; then
-        log_error "Invalid YAML in network whitelist: $file"
-        exit 1
-    fi
-    
-    # Check required fields
-    if ! python3 -c "
-import yaml
-data = yaml.safe_load(open('$file'))
-if 'egress_allowed' not in data:
-    raise ValueError('Missing egress_allowed')
-if 'dns_servers' not in data:
-    raise ValueError('Missing dns_servers')
-" 2>/dev/null; then
-        log_error "Network whitelist missing required fields (egress_allowed, dns_servers)"
-        exit 1
-    fi
-    
-    log_info "Network whitelist validated: $file"
-}
-
-# Parse DNS servers from the network whitelist YAML.
-# Outputs one IP per line.
-parse_dns_servers() {
-    local file="$1"
-    python3 -c "
-import yaml, sys
-data = yaml.safe_load(open('$file'))
-for s in data.get('dns_servers', []):
-    print(s)
-"
-}
-
-# Parse egress allowed entries from the network whitelist YAML.
-# Outputs lines in format: domain port
-parse_egress_entries() {
-    local file="$1"
-    python3 -c "
-import yaml, sys
-data = yaml.safe_load(open('$file'))
-for entry in data.get('egress_allowed', []):
-    domain = entry['domain']
-    for port in entry.get('ports', []):
-        print(f'{domain} {port}')
-"
-}
-
-# Resolve a domain to IP addresses using dig.
-# Uses the provided DNS server for resolution.
-# Outputs one IP per line. Returns empty if resolution fails.
-resolve_domain() {
-    local domain="$1"
-    local dns_server="${2:-8.8.8.8}"
-
-    if ! command -v dig &>/dev/null; then
-        log_warn "dig not available, falling back to getent for $domain"
-        getent ahosts "$domain" 2>/dev/null | awk '{print $1}' | sort -u
-        return
-    fi
-
-    local ips
-    ips=$(dig +short "$domain" "@${dns_server}" 2>/dev/null | grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$')
-    if [[ -z "$ips" ]]; then
-        log_warn "Could not resolve $domain, skipping"
-        return
-    fi
-    echo "$ips"
-}
-
-# Generate iptables runcmd entries from the network whitelist.
-# Resolves domains to IPs and creates per-IP rules for each port.
-# Also generates DNS server rules from the whitelist's dns_servers field.
-generate_network_rules() {
-    local network_file="$1"
-    local rules=""
-
-    # Read DNS servers from the whitelist
-    local dns_servers
-    dns_servers=$(parse_dns_servers "$network_file")
-    local first_dns
-    first_dns=$(echo "$dns_servers" | head -1)
-
-    # Generate DNS iptables rules
-    while IFS= read -r dns_ip; do
-        [[ -z "$dns_ip" ]] && continue
-        rules+="  - iptables -A OUTPUT -p udp --dport 53 -d ${dns_ip} -j ACCEPT\n"
-        rules+="  - iptables -A OUTPUT -p tcp --dport 53 -d ${dns_ip} -j ACCEPT\n"
-    done <<< "$dns_servers"
-
-    # Resolve each domain and generate per-IP rules
-    local prev_domain=""
-    while IFS=' ' read -r domain port; do
-        [[ -z "$domain" ]] && continue
-        # Resolve domain (cache across ports for the same domain)
-        if [[ "$domain" != "$prev_domain" ]]; then
-            local resolved_ips
-            resolved_ips=$(resolve_domain "$domain" "$first_dns")
-            prev_domain="$domain"
-        fi
-        if [[ -z "$resolved_ips" ]]; then
-            continue
-        fi
-        # Generate a rule for each resolved IP
-        while IFS= read -r ip; do
-            [[ -z "$ip" ]] && continue
-            rules+="  - iptables -A OUTPUT -p tcp -d ${ip} --dport ${port} -j ACCEPT\n"
-        done <<< "$resolved_ips"
-    done < <(parse_egress_entries "$network_file")
-
-    echo -e "$rules"
 }
 
 # Extract a YAML list section from a cloud-init file.
@@ -386,8 +255,7 @@ generate_write_files() {
 # Generate cloud-init YAML by reading and merging base.yaml + security.yaml + secrets
 generate_cloud_init() {
     local secrets_file="$1"
-    local network_file="$2"
-    local repo_url="$3"
+    local repo_url="$2"
 
     local base_file="${CLOUD_INIT_DIR}/base.yaml"
     local security_file="${CLOUD_INIT_DIR}/security.yaml"
@@ -431,36 +299,8 @@ generate_cloud_init() {
     # Base runcmd (directory creation, package cleanup)
     [[ -n "$base_runcmd" ]] && output+="${base_runcmd}\n"
 
-    # Security runcmd up to the PLACEHOLDER marker (default-deny, loopback, established)
-    # Then inject dynamic rules, then continue with the rest (log, save, SSH disable, lock)
-    local before_placeholder="" after_placeholder="" in_after=false
-    while IFS= read -r line || [[ -n "$line" ]]; do
-        if [[ "$line" == *"PLACEHOLDER"* ]]; then
-            in_after=true
-            continue
-        fi
-        if $in_after; then
-            after_placeholder+="${line}\n"
-        else
-            before_placeholder+="${line}\n"
-        fi
-    done <<< "$security_runcmd"
-
-    # Static security rules (default-deny, loopback, established)
-    [[ -n "$before_placeholder" ]] && output+="${before_placeholder}"
-
-    # Generate DNS and per-IP domain rules from the network whitelist
-    output+="  # DNS and domain rules (generated from $network_file)\n"
-    local network_rules
-    network_rules=$(generate_network_rules "$network_file")
-    if [[ -n "$network_rules" ]]; then
-        output+="$network_rules"
-    else
-        log_warn "No network rules generated from whitelist"
-    fi
-
-    # Remaining security rules (log, save, SSH disable, config lock)
-    [[ -n "$after_placeholder" ]] && output+="${after_placeholder}"
+    # Security runcmd (UFW setup, SSH disable, config lock)
+    [[ -n "$security_runcmd" ]] && output+="${security_runcmd}\n"
 
     # Clone repository
     output+="  - cd /home/opencode/workspace && git clone \"$repo_url\" || echo 'Clone failed'\n"
@@ -489,7 +329,7 @@ launch_vm() {
     local name="$1"
     local cloud_init="$2"
     local dry_run="$3"
-    
+
     if [[ "$dry_run" == "true" ]]; then
         log_info "=== DRY RUN MODE ==="
         log_info "VM Name: $name"
@@ -501,15 +341,15 @@ launch_vm() {
         log_info "To create this VM, run without --dry-run"
         exit 0
     fi
-    
+
     # Create temporary file for cloud-init
     local temp_file
     temp_file=$(mktemp /tmp/cloud-init.XXXXXX.yaml)
     echo "$cloud_init" > "$temp_file"
-    
+
     log_info "Creating VM: $name"
     log_info "Using Ubuntu $VM_IMAGE image"
-    
+
     # Launch VM
     if ! multipass launch "$VM_IMAGE" \
         --name "$name" \
@@ -521,19 +361,19 @@ launch_vm() {
         rm -f "$temp_file"
         exit 1
     fi
-    
+
     rm -f "$temp_file"
-    
+
     # Wait for VM to be ready
     log_info "Waiting for VM to initialize..."
     sleep 10
-    
+
     # Verify VM is running
     if ! multipass info "$name" &>/dev/null; then
         log_error "VM creation failed"
         exit 1
     fi
-    
+
     log_success "VM '$name' created successfully"
     log_info ""
     log_info "Access the VM with: multipass shell $name"
@@ -570,15 +410,6 @@ parse_args() {
                 VM_NAME="$2"
                 shift 2
                 ;;
-            --network)
-                if [[ -z "${2:-}" ]]; then
-                    log_error "Missing value for --network"
-                    print_usage
-                    exit 1
-                fi
-                NETWORK_FILE="$2"
-                shift 2
-                ;;
             --dry-run)
                 DRY_RUN=true
                 shift
@@ -594,14 +425,14 @@ parse_args() {
                 ;;
         esac
     done
-    
+
     # Validate required arguments
     if [[ -z "$REPO_URL" ]]; then
         log_error "Missing required argument: --repo"
         print_usage
         exit 1
     fi
-    
+
     if [[ -z "$SECRETS_FILE" ]]; then
         log_error "Missing required argument: --secrets"
         print_usage
@@ -611,31 +442,24 @@ parse_args() {
 
 main() {
     parse_args "$@"
-    
+
     log_info "=== Secure Dev Environment Launcher ==="
     log_info ""
-    
-    # Validate inputs (DEV-004, DEV-017)
+
+    # Validate inputs (DEV-004)
     validate_secrets_file "$SECRETS_FILE"
-    
-    # Use default network whitelist if not specified
-    if [[ -z "$NETWORK_FILE" ]]; then
-        NETWORK_FILE="$DEFAULT_NETWORK"
-        log_info "Using default network whitelist: $NETWORK_FILE"
-    fi
-    validate_network_file "$NETWORK_FILE"
-    
+
     # Generate VM name if not specified
     if [[ -z "$VM_NAME" ]]; then
         VM_NAME=$(generate_vm_name "$REPO_URL")
         log_info "Generated VM name: $VM_NAME"
     fi
-    
+
     # Generate cloud-init configuration
     log_info "Generating cloud-init configuration..."
     local cloud_init
-    cloud_init=$(generate_cloud_init "$SECRETS_FILE" "$NETWORK_FILE" "$REPO_URL")
-    
+    cloud_init=$(generate_cloud_init "$SECRETS_FILE" "$REPO_URL")
+
     # Launch VM
     launch_vm "$VM_NAME" "$cloud_init" "$DRY_RUN"
 }

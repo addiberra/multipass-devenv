@@ -3,8 +3,8 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "1.2.0"
-last_updated: "2026-03-27"
+version: "2.0.0"
+last_updated: "2026-03-28"
 
 constraint_notes:
   - constraint: "The system SHALL NOT mount host directories into the VM."
@@ -13,11 +13,11 @@ constraint_notes:
       C-001 enforces no host mounts. Repositories are cloned inside the VM,
       not mounted from the host.
 
-  - constraint: "The system SHALL block all network egress except whitelisted domains."
+  - constraint: "The system SHALL restrict network egress to essential ports via UFW."
     category: Security
     note: >-
-      C-002 provides network filtering. Requirements specify the allowed
-      endpoints and how custom whitelists work.
+      C-002 provides port-level network filtering via UFW. Requirements
+      specify the allowed outbound ports (443, 22, 53).
 
   - constraint: "The system SHALL inject secrets via cloud-init write_files, not environment variables or host mounts."
     category: Security
@@ -171,68 +171,48 @@ stories:
     title: Restrict Network Access
     narrative:
       as_a: developer
-      i_want: network access limited to essential endpoints
-      so_that: compromised agents cannot exfiltrate data or establish remote shells
+      i_want: network access limited to essential ports
+      so_that: compromised agents have restricted ability to exfiltrate data or establish remote shells
     requirements:
       - id: DEV-012
         text: >-
-          The system shall block all outbound network connections except
-          to whitelisted domains and ports.
+          The system shall configure UFW to deny all outbound and inbound
+          traffic by default.
         ears_type: ubiquitous
         verification: >-
-          After VM launch, run `multipass shell <name>` and attempt
-          `curl https://example.com` (not in whitelist). Confirm the
-          connection is blocked. Then try `curl https://github.com`
-          (in whitelist). Confirm the connection succeeds.
+          After VM launch, run `multipass shell <name>` and execute
+          `sudo ufw status verbose`. Confirm the default policy is
+          deny (incoming) and deny (outgoing).
 
       - id: DEV-013
         text: >-
-          The system shall allow outbound connections to GitHub and GitLab
-          on ports 22 (SSH) and 443 (HTTPS).
+          The system shall allow outbound connections on port 22 (SSH).
         ears_type: ubiquitous
         verification: >-
-          After VM launch, test cloning via SSH and HTTPS from GitHub
-          and GitLab. Confirm both succeed.
+          After VM launch, run `multipass shell <name>` and execute
+          `sudo ufw status`. Confirm a rule allowing outbound 22/tcp
+          exists. Test with `ssh -T git@github.com` to confirm SSH
+          git operations succeed.
 
       - id: DEV-014
         text: >-
-          The system shall allow outbound connections to OpenAI API
-          and OpenCode API endpoints on port 443.
+          The system shall allow outbound connections on port 443 (HTTPS).
         ears_type: ubiquitous
         verification: >-
-          After VM launch with valid API keys, run `opencode` and initiate
-          a request. Confirm the API call succeeds without network errors.
+          After VM launch, run `multipass shell <name>` and execute
+          `sudo ufw status`. Confirm a rule allowing outbound 443/tcp
+          exists. Test with `curl https://github.com` to confirm HTTPS
+          connections succeed.
 
       - id: DEV-015
         text: >-
-          The system shall allow outbound connections to package registries
-          (PyPI, npm, crates.io) on port 443.
+          The system shall allow outbound DNS traffic on port 53.
         ears_type: ubiquitous
         verification: >-
-          After VM launch, run `pip install <small-package>` and
-          `npm install <small-package>`. Confirm package installation succeeds.
-
-      - id: DEV-016
-        text: >-
-          When a custom network whitelist is provided via --network, the
-          system shall apply the domains, ports, and DNS servers from that
-          file instead of the defaults.
-        ears_type: event-driven
-        verification: >-
-          Create a custom whitelist with a single allowed domain and a
-          custom DNS server. Run `./scripts/launch.sh --network custom-whitelist.yaml ...`.
-          Confirm only the custom domain is reachable and that
-          `/etc/resolv.conf` or iptables DNS rules reflect the custom resolver.
-
-      - id: DEV-017
-        text: >-
-          If network rules cannot be applied during initialization, the
-          system shall abort the launch and display an error.
-        ears_type: unwanted-behavior
-        verification: >-
-          Provide a malformed network whitelist YAML file. Run
-          `./scripts/launch.sh --network malformed.yaml ...`.
-          Confirm an error is displayed and VM creation is aborted.
+          After VM launch, run `multipass shell <name>` and execute
+          `sudo ufw status`. Confirm a rule allowing outbound 53
+          exists. Test with `dig github.com` to confirm DNS resolution
+          works.
 
   - id: US-005
     title: Verify Supply Chain Integrity

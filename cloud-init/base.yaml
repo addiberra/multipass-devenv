@@ -30,8 +30,7 @@ packages:
   - npm
 
   # Network firewall
-  - iptables
-  - iptables-persistent
+  - ufw
 
   # Additional utilities
   - jq

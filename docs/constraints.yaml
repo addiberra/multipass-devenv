@@ -2,7 +2,7 @@
 
 schema_version: "1.0.0"
 version: "1.0.0"
-last_updated: "2026-03-25"
+last_updated: "2026-03-28"
 
 categories:
   - name: Security
@@ -18,12 +18,12 @@ categories:
 
       - id: C-002
         text: >-
-          The system SHALL block all network egress except whitelisted domains.
+          The system SHALL restrict network egress to essential ports via UFW.
         rationale: >-
-          Default-deny network policy prevents data exfiltration and remote
-          shell establishment by compromised agents. Only essential endpoints
-          (Git providers, LLM APIs, package registries) are permitted.
-        added: "2026-03-25"
+          Port-level default-deny policy via UFW limits exfiltration and
+          remote shell establishment by compromised agents. Outbound traffic
+          is allowed only on ports 443 (HTTPS), 22 (SSH), and 53 (DNS).
+        added: "2026-03-28"
 
       - id: C-003
         text: >-
@@ -164,33 +164,3 @@ categories:
           before they can be exploited.
         added: "2026-03-25"
 
-  - name: Network
-    constraints:
-      - id: C-017
-        text: >-
-          DNS resolution SHALL be restricted to trusted resolvers only.
-        rationale: >-
-          Unrestricted DNS allows DNS-based data exfiltration.
-          Restricting to trusted resolvers (e.g., 8.8.8.8, 1.1.1.1)
-          prevents this attack vector.
-        added: "2026-03-25"
-
-      - id: C-018
-        text: >-
-          Network whitelist SHALL be configurable per project with
-          a secure default.
-        rationale: >-
-          Different projects may require different network access
-          (e.g., specific internal APIs). A configurable whitelist
-          allows flexibility while maintaining security by default.
-        added: "2026-03-25"
-
-      - id: C-019
-        text: >-
-          The default network whitelist SHALL allow only Git providers,
-          LLM APIs, and package registries.
-        rationale: >-
-          Default-deny with minimal allowlist follows the principle
-          of least privilege. Any additional access must be explicitly
-          configured by the user.
-        added: "2026-03-25"

@@ -1,33 +1,20 @@
 #cloud-config
 # Security cloud-init configuration for secure dev environment
-# Provides the static iptables skeleton, SSH disablement, and post-boot hardening
+# Configures UFW port-level firewall, disables SSH, and hardens post-boot
 #
 # See docs/features/dev-env-setup/spec.yaml US-004, US-006
 # See docs/constraints.yaml C-002, C-004, C-005, C-009
-#
-# Domain-specific iptables rules and DNS resolver rules are generated
-# dynamically by launch.sh from the network whitelist configuration.
-# This file contains only the static base that does not vary per launch.
 
 runcmd:
-  # Default-deny policies (DEV-012)
-  - iptables -P OUTPUT DROP
-  - iptables -P INPUT DROP
-  - iptables -P FORWARD DROP
+  # UFW firewall configuration (DEV-012, DEV-013, DEV-014, DEV-015)
+  - ufw default deny outgoing
+  - ufw default deny incoming
+  - ufw allow out 443/tcp
+  - ufw allow out 22/tcp
+  - ufw allow out 53
+  - ufw --force enable
 
-  # Allow loopback and established connections
-  - iptables -A INPUT -m state --state ESTABLISHED,RELATED -j ACCEPT
-  - iptables -A INPUT -i lo -j ACCEPT
-  - iptables -A OUTPUT -o lo -j ACCEPT
-
-  # === PLACEHOLDER: launch.sh injects DNS and per-IP rules here ===
-
-  # Log dropped packets for debugging
-  - iptables -A OUTPUT -j LOG --log-prefix "IPTABLES_DROP: " --log-level 4
-  - iptables -A INPUT -j LOG --log-prefix "IPTABLES_DROP: " --log-level 4
-  - iptables-save > /etc/iptables/rules.v4
-
-  # Disable SSH access (DEV-004)
+  # Disable SSH access (C-004)
   - systemctl stop sshd || true
   - systemctl disable sshd || true
 
