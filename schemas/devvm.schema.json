@@ -1,0 +1,106 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.com/devvm.schema.json",
+  "title": "DevVM Config",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "instance",
+    "source",
+    "guest",
+    "provisioning",
+    "secrets",
+    "security",
+    "opencode"
+  ],
+  "properties": {
+    "schema_version": { "const": "1.0" },
+    "instance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ubuntu_release", "cpus", "memory", "disk"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$" },
+        "ubuntu_release": { "type": "string", "pattern": "^[0-9]{2}\\.[0-9]{2}$" },
+        "cpus": { "type": "integer", "minimum": 1 },
+        "memory": { "type": "string", "pattern": "^[1-9][0-9]*[MG]$" },
+        "disk": { "type": "string", "pattern": "^[1-9][0-9]*[MG]$" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repo"],
+      "properties": {
+        "repo": { "type": "string", "minLength": 1 },
+        "branch": { "type": "string" }
+      }
+    },
+    "base": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "instance_name": { "type": "string", "pattern": "^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$" }
+      }
+    },
+    "guest": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["user", "workspace_dir", "repo_dir"],
+      "properties": {
+        "user": { "type": "string", "minLength": 1 },
+        "workspace_dir": { "type": "string", "pattern": "^/" },
+        "repo_dir": { "type": "string", "pattern": "^/" }
+      }
+    },
+    "provisioning": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cloud_init", "bootstrap_script"],
+      "properties": {
+        "cloud_init": { "type": "string", "minLength": 1 },
+        "bootstrap_script": { "type": "string", "minLength": 1 }
+      }
+    },
+    "secrets": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["env_file"],
+      "properties": {
+        "env_file": { "type": "string", "minLength": 1 }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["disable_ssh", "mount_workspace", "allowed_outbound_ports"],
+      "properties": {
+        "disable_ssh": { "type": "boolean" },
+        "mount_workspace": { "const": false },
+        "allowed_outbound_ports": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "integer", "minimum": 1, "maximum": 65535 }
+        }
+      }
+    },
+    "opencode": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["download_url", "sha256"],
+      "properties": {
+        "config_template": { "type": "string", "minLength": 1 },
+        "config_path": { "type": "string", "pattern": "^/" },
+        "download_url": { "type": "string", "format": "uri" },
+        "sha256": { "type": "string", "pattern": "^[a-fA-F0-9]{64}$" }
+      },
+      "dependentRequired": {
+        "config_template": ["config_path"],
+        "config_path": ["config_template"]
+      }
+    }
+  }
+}

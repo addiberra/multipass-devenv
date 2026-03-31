@@ -1,157 +1,201 @@
 # Secure Multipass Dev Environment
 
-An isolated development environment for agentic AI coding tools like OpenCode CLI. It launches an Ubuntu VM with Multipass, clones your repo inside the guest, injects only the secrets you provide, and restricts outbound network access via UFW.
+An isolated development environment for agentic coding tools like OpenCode.
+The project now uses a thin Go `create` CLI that reads `devvm.yaml`, creates a
+Multipass VM, transfers only the files needed for the session, and bootstraps
+the guest without host mounts or SSH access.
 
 ## Features
 
-- **VM isolation**: Multipass provides the primary boundary between host and agent execution
-- **No host mounts**: Repositories are cloned inside the VM
-- **Network egress controls**: UFW applies a default-deny outbound policy allowing only ports 443, 22, and 53
-- **Secret injection**: Credentials are written via cloud-init instead of inherited from the host environment
-- **Non-root execution**: OpenCode runs as the `opencode` user with no sudo access
+- VM isolation through Multipass
+- Config-driven startup with `devvm.yaml`
+- No host workspace mounts
+- Scoped provisioning-file delivery instead of host env inheritance
+- UFW default-deny network posture with explicit outbound allow rules
+- Non-root guest runtime with sudo removed after setup
 
 ## Prerequisites
 
-- **Multipass** installed and running
-  ```bash
-  # macOS
-  brew install --cask multipass
-
-  # Linux
-  sudo snap install multipass
-  ```
-- **Git** available on the host
+- Multipass installed and running
+- Go 1.26 or newer
+- Git available on the host
 
 ## Quick Start
 
 ### 1. Create a secrets file
 
+Create `secrets.env` in the project root:
+
 ```bash
-# Required
 OPENAI_API_KEY=sk-your-openai-api-key
 GIT_USER_NAME=Your Name
-GIT_USER_EMAIL=your@email.com
+GIT_USER_EMAIL=you@example.com
 
 # Optional
 OPENCODE_API_KEY=your-opencode-api-key
 ```
 
-Do not commit `secrets.env` to version control.
+Do not commit `secrets.env`.
 
-### 2. Launch the environment
+### 2. Configure `devvm.yaml`
+
+The repository includes a sample `devvm.yaml`. Update at least:
+
+- `source.repo`
+- `source.branch` if needed
+- `secrets.env_file`
+- `opencode.download_url`
+- `opencode.sha256`
+
+### 3. Create the environment
 
 ```bash
-./scripts/launch.sh \
-  --repo https://github.com/your-org/your-repo.git \
-  --secrets secrets.env
+go run ./cmd/devvm create
 ```
 
-### 3. Connect to the VM
+Optional:
+
+```bash
+go run ./cmd/devvm create --config ./devvm.yaml
+```
+
+### 4. Enter the VM
 
 ```bash
 multipass shell <vm-name>
 ```
 
-Your repository is cloned to `/home/opencode/workspace/`.
+The configured repository is cloned into `guest.repo_dir` inside the VM.
 
-## Usage
+## Config File
 
-### `launch.sh`
+`devvm.yaml` is validated against `schemas/devvm.schema.json`.
 
-```text
-Usage: ./scripts/launch.sh [OPTIONS]
+Top-level sections:
 
-Required:
-  --repo <url>           Git repository URL to clone inside VM
-  --secrets <file>       Path to secrets.env file with API keys and git config
+- `instance`
+- `source`
+- `base`
+- `guest`
+- `provisioning`
+- `secrets`
+- `security`
+- `opencode`
 
-Optional:
-  --name <name>          VM name (default: auto-generated from repo)
-  --dry-run              Show configuration without creating VM
-  --help                 Show this help message
+Example:
+
+```yaml
+schema_version: "1.0"
+
+instance:
+  name: "my-project-dev"
+  ubuntu_release: "24.04"
+  cpus: 2
+  memory: "4G"
+  disk: "30G"
+
+source:
+  repo: "git@github.com:org/repo.git"
+  branch: "main"
+
+base:
+  enabled: true
+  instance_name: "opencode-base"
+
+guest:
+  user: "opencode"
+  workspace_dir: "/home/opencode/workspace"
+  repo_dir: "/home/opencode/workspace/repo"
+
+provisioning:
+  cloud_init: "./cloud-init/base.yaml"
+  bootstrap_script: "./scripts/bootstrap-guest.sh"
+
+secrets:
+  env_file: "./secrets.env"
+
+security:
+  disable_ssh: true
+  mount_workspace: false
+  allowed_outbound_ports:
+    - 53
+    - 443
+
+opencode:
+  config_template: "./templates/opencode-config.yaml.j2"
+  config_path: "/home/opencode/.config/opencode/config.yaml"
+  download_url: "https://github.com/anomalyco/opencode/releases/download/example/opencode-linux-amd64"
+  sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 ```
 
-### Dry run
+## How It Works
 
-```bash
-./scripts/launch.sh --dry-run --repo <url> --secrets secrets.env
-```
-
-## Network Rules
-
-UFW is configured with a default-deny outbound policy. The following ports are allowed:
-
-| Port | Protocol | Purpose |
-|------|----------|---------|
-| 443 | TCP | HTTPS (APIs, package registries, git over HTTPS) |
-| 22 | TCP | SSH (git clone/push) |
-| 53 | UDP/TCP | DNS resolution |
+1. The CLI reads and validates `devvm.yaml`.
+2. It clones from a configured base instance when available, otherwise it launches a fresh Ubuntu VM with static cloud-init.
+3. It waits for the guest to become ready.
+4. It transfers scoped provisioning files into the guest.
+5. It runs `scripts/bootstrap-guest.sh` inside the VM to configure UFW, install OpenCode, render config, and clone the repository.
 
 ## Security Model
 
 - The primary isolation boundary is the Multipass VM
-- Repositories live only inside the guest workspace
+- Host directories are not mounted into the guest
+- Secrets are provided through scoped files copied during setup
 - SSH is disabled; access is through `multipass shell`
-- Secrets are injected through cloud-init and stored in the guest
-- OpenCode runs as a non-root user with sudo revoked after setup
-
-## Directory Structure
-
-```text
-multipass-devenv/
-├── cloud-init/
-│   ├── base.yaml
-│   └── security.yaml
-├── scripts/
-│   ├── launch.sh
-│   ├── inject-secrets.sh
-│   └── validate.sh
-├── templates/
-│   ├── opencode-config.yaml.j2
-│   └── requirements.pinned.txt.j2
-└── README.md
-```
+- The guest user is non-root and loses sudo access after provisioning
 
 ## Verification
 
-After launching a VM:
+Build the CLI:
 
 ```bash
-# Inside the VM
+go build ./...
+```
+
+After creating a VM:
+
+```bash
 whoami
+sudo -n true
 sudo ufw status verbose
-curl https://github.com
 opencode --version
-git config --global user.name
-git config --global user.email
+git -C /home/opencode/workspace/repo branch --show-current
 ```
 
 Expected results:
 
-- `whoami` prints `opencode`
-- `ufw status` shows default deny with allow rules for 443, 22, 53
-- `curl https://github.com` succeeds
-- `opencode --version` prints a version
+- `whoami` prints the configured guest user
+- `sudo -n true` fails
+- UFW shows deny-by-default with only the configured outbound allows
+- `opencode --version` succeeds
 
-## Troubleshooting
+## Repository Layout
 
-### VM fails to start
-
-1. Check `multipass list`
-2. Check `multipass info <name>`
-3. Review `/var/log/cloud-init-output.log` inside the VM
-
-### Network access issues
-
-1. Check `sudo ufw status verbose`
-2. Check `/var/log/ufw.log`
+```text
+multipass-devenv/
+├── cloud-init/
+│   └── base.yaml
+├── cmd/
+│   └── devvm/
+│       └── main.go
+├── internal/
+│   ├── config/
+│   ├── create/
+│   ├── multipass/
+│   └── provisioning/
+├── schemas/
+│   └── devvm.schema.json
+├── scripts/
+│   └── bootstrap-guest.sh
+├── templates/
+│   └── opencode-config.yaml.j2
+├── devvm.yaml
+└── README.md
+```
 
 ## Project Docs
 
-- ADR: `docs/adrs/0001-multipass-sandbox.yaml`
+- ADRs: `docs/adrs/`
 - Constraints: `docs/constraints.yaml`
 - Architecture: `docs/architecture.adoc`
-
-## License
-
-MIT License - see `LICENSE`
+- Feature artifacts: `docs/features/dev-env-setup/`

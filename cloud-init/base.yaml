@@ -1,12 +1,11 @@
 #cloud-config
-# Base cloud-init configuration for secure dev environment
-# Installs packages and creates non-root user
+# Base cloud-init configuration for secure dev environment.
+# Installs packages, creates the guest user, and prepares the VM for
+# post-boot provisioning by the Go create CLI.
 #
 # See docs/features/dev-env-setup/spec.yaml US-001, US-005
 # See docs/constraints.yaml C-005, C-010, C-014
 #
-# This file is merged with security.yaml by launch.sh
-
 # === Package Installation ===
 # Only from official Ubuntu repositories (C-010)
 package_update: true
@@ -70,6 +69,9 @@ runcmd:
   - mkdir -p /home/opencode/.ssh
   - chown opencode:opencode /home/opencode/.ssh
   - chmod 0700 /home/opencode/.ssh
+
+  # Disable SSH access; the VM is entered through Multipass only.
+  - systemctl disable --now ssh || systemctl disable --now sshd || true
 
   # Ensure package installation completed
   - apt-get clean
