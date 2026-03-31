@@ -69,7 +69,7 @@ categories:
     constraints:
       - id: C-007
         text: >-
-          The system SHALL prevent file writes outside /home/ubuntu/workspace.
+          The system SHALL prevent file writes outside /home/opencode/workspace.
         rationale: >-
           Restricting write operations to the workspace prevents modification
           of system files, user dotfiles, and configuration that could

@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -13,9 +14,15 @@ import (
 )
 
 var (
-	namePattern = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
-	sizePattern = regexp.MustCompile(`^[1-9][0-9]*[MG]$`)
+	namePattern    = regexp.MustCompile(`^[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$`)
+	sizePattern    = regexp.MustCompile(`^[1-9][0-9]*[MG]$`)
+	pinnedSSHHosts = map[string]struct{}{
+		"github.com": {},
+		"gitlab.com": {},
+	}
 )
+
+const officialOpenCodeReleasePrefix = "https://github.com/anomalyco/opencode/releases/download/"
 
 type Config struct {
 	SchemaVersion string             `yaml:"schema_version"`
@@ -77,6 +84,11 @@ type OpenCodeConfig struct {
 	SHA256         string `yaml:"sha256"`
 }
 
+type SourceRepo struct {
+	Host    string
+	UsesSSH bool
+}
+
 func Load(path string) (*Config, error) {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
@@ -122,6 +134,8 @@ func (c *Config) Validate() error {
 	}
 	if c.Source.Repo == "" {
 		problems = append(problems, "source.repo is required")
+	} else if _, err := ParseSourceRepo(c.Source.Repo); err != nil {
+		problems = append(problems, fmt.Sprintf("source.repo %v", err))
 	}
 	if c.Base.Enabled && c.Base.InstanceName == "" {
 		problems = append(problems, "base.instance_name is required when base.enabled is true")
@@ -171,6 +185,8 @@ func (c *Config) Validate() error {
 	}
 	if c.OpenCode.DownloadURL == "" {
 		problems = append(problems, "opencode.download_url is required")
+	} else if err := validateOpenCodeDownloadURL(c.OpenCode.DownloadURL); err != nil {
+		problems = append(problems, fmt.Sprintf("opencode.download_url %v", err))
 	}
 	if c.OpenCode.SHA256 == "" {
 		problems = append(problems, "opencode.sha256 is required")
@@ -215,6 +231,78 @@ func (c *Config) Validate() error {
 
 	if c.Instance.Name == "" {
 		c.Instance.Name = autoName(c.Source.Repo)
+	}
+	return nil
+}
+
+func (c *Config) SourceRepo() (SourceRepo, error) {
+	return ParseSourceRepo(c.Source.Repo)
+}
+
+func ParseSourceRepo(repo string) (SourceRepo, error) {
+	if strings.HasPrefix(repo, "https://") {
+		u, err := url.Parse(repo)
+		if err != nil {
+			return SourceRepo{}, fmt.Errorf("must be a valid HTTPS URL: %w", err)
+		}
+		if u.Host == "" || strings.TrimPrefix(u.Path, "/") == "" {
+			return SourceRepo{}, fmt.Errorf("must include a host and repository path")
+		}
+		return SourceRepo{Host: strings.ToLower(u.Hostname())}, nil
+	}
+
+	if strings.HasPrefix(repo, "ssh://") {
+		u, err := url.Parse(repo)
+		if err != nil {
+			return SourceRepo{}, fmt.Errorf("must be a valid SSH URL: %w", err)
+		}
+		if u.User == nil || u.User.Username() != "git" {
+			return SourceRepo{}, fmt.Errorf("must use the git SSH user")
+		}
+		host := strings.ToLower(u.Hostname())
+		if _, ok := pinnedSSHHosts[host]; !ok {
+			return SourceRepo{}, fmt.Errorf("must use a supported SSH host with pinned keys (github.com or gitlab.com)")
+		}
+		if strings.TrimPrefix(u.Path, "/") == "" {
+			return SourceRepo{}, fmt.Errorf("must include a repository path")
+		}
+		return SourceRepo{Host: host, UsesSSH: true}, nil
+	}
+
+	user, hostPath, ok := strings.Cut(repo, "@")
+	if !ok {
+		return SourceRepo{}, fmt.Errorf("must use https://, ssh://git@..., or git@host:path syntax")
+	}
+	if user != "git" {
+		return SourceRepo{}, fmt.Errorf("must use the git SSH user")
+	}
+	host, repoPath, ok := strings.Cut(hostPath, ":")
+	if !ok || strings.TrimSpace(host) == "" || strings.TrimSpace(repoPath) == "" {
+		return SourceRepo{}, fmt.Errorf("must use git@host:path syntax for SSH repositories")
+	}
+	host = strings.ToLower(strings.TrimSpace(host))
+	if _, supported := pinnedSSHHosts[host]; !supported {
+		return SourceRepo{}, fmt.Errorf("must use a supported SSH host with pinned keys (github.com or gitlab.com)")
+	}
+	return SourceRepo{Host: host, UsesSSH: true}, nil
+}
+
+func validateOpenCodeDownloadURL(raw string) error {
+	if !strings.HasPrefix(raw, officialOpenCodeReleasePrefix) {
+		return fmt.Errorf("must use the official OpenCode GitHub release URL prefix %q", officialOpenCodeReleasePrefix)
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("must be a valid HTTPS URL: %w", err)
+	}
+	if u.Scheme != "https" {
+		return fmt.Errorf("must use https")
+	}
+	if strings.ToLower(u.Hostname()) != "github.com" {
+		return fmt.Errorf("must use github.com")
+	}
+	if u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("must not include a query string or fragment")
 	}
 	return nil
 }

@@ -47,6 +47,12 @@ The repository includes a sample `devvm.yaml`. Update at least:
 - `opencode.download_url`
 - `opencode.sha256`
 
+Security checks enforced by the CLI:
+
+- `opencode.download_url` must use the official OpenCode GitHub release path
+- SSH repository URLs are only supported for `github.com` and `gitlab.com`
+- HTTPS repository URLs are the default and work with the default `53` and `443` egress policy
+
 ### 3. Create the environment
 
 ```bash
@@ -95,7 +101,7 @@ instance:
   disk: "30G"
 
 source:
-  repo: "git@github.com:org/repo.git"
+  repo: "https://github.com/org/repo.git"
   branch: "main"
 
 base:
@@ -143,6 +149,7 @@ opencode:
 - Secrets are provided through scoped files copied during setup
 - SSH is disabled; access is through `multipass shell`
 - The guest user is non-root and loses sudo access after provisioning
+- SSH-based git clones use pinned host keys for `github.com` and `gitlab.com`
 
 ## Verification
 

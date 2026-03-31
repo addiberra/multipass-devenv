@@ -1,4 +1,4 @@
-module github.com/addiberra/multipass-devenv-worktrees/feature-secure-dev-env-setup
+module github.com/addiberra/multipass-devenv
 
 go 1.26.0
 

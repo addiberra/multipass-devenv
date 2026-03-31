@@ -3,14 +3,14 @@
 schema_version: "1.0"
 
 instance:
-  name: "my-project-dev"
+  name: "my-project-dev2"
   ubuntu_release: "24.04"
   cpus: 2
   memory: "4G"
   disk: "30G"
 
 source:
-  repo: "git@github.com:org/repo.git"
+  repo: "https://github.com/provenimpact/proven-needs.git"
   branch: "main"
 
 base:
@@ -39,5 +39,5 @@ security:
 opencode:
   config_template: "./templates/opencode-config.yaml.j2"
   config_path: "/home/opencode/.config/opencode/config.yaml"
-  download_url: "https://github.com/anomalyco/opencode/releases/download/example/opencode-linux-amd64"
-  sha256: "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  download_url: "https://github.com/anomalyco/opencode/releases/download/v1.3.10/opencode-linux-x64.tar.gz"
+  sha256: "ba53196de632142a86b1df77a0777fae313620ac8fe54d11c83c310d4aeeca74"

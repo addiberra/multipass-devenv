@@ -2,13 +2,14 @@ package provisioning
 
 import (
 	"bytes"
+	_ "embed"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"text/template"
 
-	"github.com/addiberra/multipass-devenv-worktrees/feature-secure-dev-env-setup/internal/config"
+	"github.com/addiberra/multipass-devenv/internal/config"
 )
 
 type StagedFiles struct {
@@ -19,11 +20,16 @@ type StagedFiles struct {
 	OpenCodeLocalPath  string
 	RemoteDir          string
 
-	RemoteBootstrap string
-	RemoteSecrets   string
-	RemoteEnv       string
-	RemoteOpenCode  string
+	RemoteBootstrap     string
+	RemoteSecrets       string
+	RemoteEnv           string
+	RemoteOpenCode      string
+	KnownHostsLocalPath string
+	RemoteKnownHosts    string
 }
+
+//go:embed known_hosts
+var pinnedKnownHosts string
 
 func Prepare(cfg *config.Config) (*StagedFiles, error) {
 	tempDir, err := os.MkdirTemp("", "devvm-stage-")
@@ -42,20 +48,25 @@ func Prepare(cfg *config.Config) (*StagedFiles, error) {
 	stage.RemoteSecrets = stage.RemoteDir + "/secrets.env"
 	stage.RemoteEnv = stage.RemoteDir + "/bootstrap.env"
 
+	repo, err := cfg.SourceRepo()
+	if err != nil {
+		return nil, err
+	}
+
 	if err := copyFile(cfg.Provisioning.BootstrapScript, stage.BootstrapLocalPath, 0o755); err != nil {
 		return nil, err
 	}
 	if err := copyFile(cfg.Secrets.EnvFile, stage.SecretsLocalPath, 0o600); err != nil {
 		return nil, err
 	}
-	if err := os.WriteFile(stage.EnvLocalPath, []byte(buildBootstrapEnv(cfg, "")), 0o600); err != nil {
+	if err := os.WriteFile(stage.EnvLocalPath, []byte(buildBootstrapEnv(cfg, "", "")), 0o600); err != nil {
 		return nil, fmt.Errorf("write bootstrap env: %w", err)
 	}
 
 	if cfg.OpenCode.ConfigTemplate != "" {
 		stage.OpenCodeLocalPath = filepath.Join(tempDir, "opencode-config.yaml")
 		stage.RemoteOpenCode = stage.RemoteDir + "/opencode-config.yaml"
-		if err := os.WriteFile(stage.EnvLocalPath, []byte(buildBootstrapEnv(cfg, stage.RemoteOpenCode)), 0o600); err != nil {
+		if err := os.WriteFile(stage.EnvLocalPath, []byte(buildBootstrapEnv(cfg, stage.RemoteOpenCode, "")), 0o600); err != nil {
 			return nil, fmt.Errorf("rewrite bootstrap env: %w", err)
 		}
 		content, err := renderOpenCodeConfig(cfg)
@@ -68,8 +79,19 @@ func Prepare(cfg *config.Config) (*StagedFiles, error) {
 	}
 
 	if stage.RemoteOpenCode == "" {
-		if err := os.WriteFile(stage.EnvLocalPath, []byte(buildBootstrapEnv(cfg, "")), 0o600); err != nil {
+		if err := os.WriteFile(stage.EnvLocalPath, []byte(buildBootstrapEnv(cfg, "", "")), 0o600); err != nil {
 			return nil, fmt.Errorf("finalize bootstrap env: %w", err)
+		}
+	}
+
+	if repo.UsesSSH {
+		stage.KnownHostsLocalPath = filepath.Join(tempDir, "known_hosts")
+		stage.RemoteKnownHosts = stage.RemoteDir + "/known_hosts"
+		if err := os.WriteFile(stage.KnownHostsLocalPath, []byte(pinnedKnownHosts), 0o644); err != nil {
+			return nil, fmt.Errorf("write pinned known_hosts: %w", err)
+		}
+		if err := os.WriteFile(stage.EnvLocalPath, []byte(buildBootstrapEnv(cfg, stage.RemoteOpenCode, stage.RemoteKnownHosts)), 0o600); err != nil {
+			return nil, fmt.Errorf("rewrite bootstrap env with known_hosts: %w", err)
 		}
 	}
 
@@ -93,22 +115,27 @@ func copyFile(src, dst string, mode os.FileMode) error {
 	return nil
 }
 
-func buildBootstrapEnv(cfg *config.Config, remoteOpenCodePath string) string {
+func buildBootstrapEnv(cfg *config.Config, remoteOpenCodePath, remoteKnownHostsPath string) string {
 	lines := []string{
-		fmt.Sprintf("DEVVM_GUEST_USER=%s", shellQuote(cfg.Guest.User)),
-		fmt.Sprintf("DEVVM_WORKSPACE_DIR=%s", shellQuote(cfg.Guest.WorkspaceDir)),
-		fmt.Sprintf("DEVVM_REPO_DIR=%s", shellQuote(cfg.Guest.RepoDir)),
-		fmt.Sprintf("DEVVM_SOURCE_REPO=%s", shellQuote(cfg.Source.Repo)),
-		fmt.Sprintf("DEVVM_SOURCE_BRANCH=%s", shellQuote(cfg.Source.Branch)),
-		fmt.Sprintf("DEVVM_DISABLE_SSH=%s", shellQuote(boolString(cfg.Security.DisableSSH))),
-		fmt.Sprintf("DEVVM_ALLOWED_OUTBOUND_PORTS=%s", shellQuote(joinPorts(cfg.Security.AllowedOutboundPorts))),
-		fmt.Sprintf("DEVVM_OPENCODE_DOWNLOAD_URL=%s", shellQuote(cfg.OpenCode.DownloadURL)),
-		fmt.Sprintf("DEVVM_OPENCODE_SHA256=%s", shellQuote(cfg.OpenCode.SHA256)),
+		fmt.Sprintf("export DEVVM_GUEST_USER=%s", shellQuote(cfg.Guest.User)),
+		fmt.Sprintf("export DEVVM_WORKSPACE_DIR=%s", shellQuote(cfg.Guest.WorkspaceDir)),
+		fmt.Sprintf("export DEVVM_REPO_DIR=%s", shellQuote(cfg.Guest.RepoDir)),
+		fmt.Sprintf("export DEVVM_SOURCE_REPO=%s", shellQuote(cfg.Source.Repo)),
+		fmt.Sprintf("export DEVVM_SOURCE_BRANCH=%s", shellQuote(cfg.Source.Branch)),
+		fmt.Sprintf("export DEVVM_DISABLE_SSH=%s", shellQuote(boolString(cfg.Security.DisableSSH))),
+		fmt.Sprintf("export DEVVM_ALLOWED_OUTBOUND_PORTS=%s", shellQuote(joinPorts(cfg.Security.AllowedOutboundPorts))),
+		fmt.Sprintf("export DEVVM_OPENCODE_DOWNLOAD_URL=%s", shellQuote(cfg.OpenCode.DownloadURL)),
+		fmt.Sprintf("export DEVVM_OPENCODE_SHA256=%s", shellQuote(cfg.OpenCode.SHA256)),
 	}
 	if cfg.OpenCode.ConfigPath != "" {
 		lines = append(lines,
-			fmt.Sprintf("DEVVM_OPENCODE_CONFIG_PATH=%s", shellQuote(cfg.OpenCode.ConfigPath)),
-			fmt.Sprintf("DEVVM_OPENCODE_CONFIG_STAGED=%s", shellQuote(strings.TrimPrefix(remoteOpenCodePath, cfg.Instance.Name+":"))),
+			fmt.Sprintf("export DEVVM_OPENCODE_CONFIG_PATH=%s", shellQuote(cfg.OpenCode.ConfigPath)),
+			fmt.Sprintf("export DEVVM_OPENCODE_CONFIG_STAGED=%s", shellQuote(strings.TrimPrefix(remoteOpenCodePath, cfg.Instance.Name+":"))),
+		)
+	}
+	if remoteKnownHostsPath != "" {
+		lines = append(lines,
+			fmt.Sprintf("export DEVVM_SSH_KNOWN_HOSTS_STAGED=%s", shellQuote(strings.TrimPrefix(remoteKnownHostsPath, cfg.Instance.Name+":"))),
 		)
 	}
 	return strings.Join(lines, "\n") + "\n"

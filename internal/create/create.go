@@ -7,9 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/addiberra/multipass-devenv-worktrees/feature-secure-dev-env-setup/internal/config"
-	"github.com/addiberra/multipass-devenv-worktrees/feature-secure-dev-env-setup/internal/multipass"
-	"github.com/addiberra/multipass-devenv-worktrees/feature-secure-dev-env-setup/internal/provisioning"
+	"github.com/addiberra/multipass-devenv/internal/config"
+	"github.com/addiberra/multipass-devenv/internal/multipass"
+	"github.com/addiberra/multipass-devenv/internal/provisioning"
 )
 
 func Run(configPath string, stdout, stderr io.Writer) error {
@@ -62,6 +62,11 @@ func Run(configPath string, stdout, stderr io.Writer) error {
 	}
 	if stage.OpenCodeLocalPath != "" {
 		if err := mp.Transfer(ctx, stage.OpenCodeLocalPath, stage.RemoteOpenCode); err != nil {
+			return err
+		}
+	}
+	if stage.KnownHostsLocalPath != "" {
+		if err := mp.Transfer(ctx, stage.KnownHostsLocalPath, stage.RemoteKnownHosts); err != nil {
 			return err
 		}
 	}

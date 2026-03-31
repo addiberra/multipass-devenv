@@ -71,7 +71,7 @@ runcmd:
   - chmod 0700 /home/opencode/.ssh
 
   # Disable SSH access; the VM is entered through Multipass only.
-  - systemctl disable --now ssh || systemctl disable --now sshd || true
+  # - systemctl disable --now ssh || systemctl disable --now sshd || true
 
   # Ensure package installation completed
   - apt-get clean

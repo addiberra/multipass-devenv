@@ -9,7 +9,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/addiberra/multipass-devenv-worktrees/feature-secure-dev-env-setup/internal/config"
+	"github.com/addiberra/multipass-devenv/internal/config"
 )
 
 type Runner struct{}

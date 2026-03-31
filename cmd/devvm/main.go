@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/addiberra/multipass-devenv-worktrees/feature-secure-dev-env-setup/internal/create"
+	"github.com/addiberra/multipass-devenv/internal/create"
 )
 
 func main() {
