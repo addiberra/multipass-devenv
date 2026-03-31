@@ -1,0 +1,67 @@
+# yaml-language-server: $schema=../schemas/adr.schema.json
+
+schema_version: "1.0.0"
+id: ADR-0002
+title: Use a Go Create CLI for Config-Driven Multipass Startup
+status: Accepted
+date: "2026-03-31"
+deciders: Project maintainers
+
+context: >-
+  ADR-0001 established Multipass as the isolation boundary for this project,
+  but the implemented startup flow remained centered on a flag-driven Bash
+  script that dynamically merged cloud-init fragments and rendered provisioned
+  files inline. That approach made the launch path harder to understand,
+  test, and evolve. The project now wants a simpler user experience centered on
+  a single `create` command backed by a project config file. The security model
+  also shifts from launch-time cloud-init secret rendering toward scoped
+  post-boot file transfer using Multipass-native commands, while preserving the
+  VM boundary, no host mounts, disabled SSH, non-root execution, and UFW port
+  controls.
+
+decision: >-
+  Keep Multipass as the primary security boundary, but replace the Bash
+  launch-script entrypoint with a Go CLI that exposes a single `create`
+  command. The command reads a schema-validated `devvm.yaml` file, decides
+  whether to clone from a prepared base instance or launch a fresh Ubuntu VM,
+  applies static cloud-init for base hardening, then uses Multipass-native
+  `transfer` and `exec` operations to deliver scoped configuration, secrets,
+  and bootstrap inputs into the guest. Project-specific setup is moved out of
+  dynamic cloud-init generation and into post-boot orchestration, reducing the
+  amount of generated YAML and keeping the startup path thin and auditable.
+
+consequences:
+  easier:
+    - A single `create` command provides a simpler startup UX than a flag-heavy Bash script.
+    - Go makes config parsing, validation, and subprocess orchestration easier to test and maintain.
+    - Static cloud-init plus post-boot Multipass operations removes most custom YAML-merging logic.
+    - A schema-validated config file gives the project a stable contract for future evolution.
+  harder:
+    - Constraints, specs, design, and architecture docs must be updated to reflect transfer-based provisioning.
+    - The CLI must carefully scope which files are transferred so the simpler flow does not broaden guest exposure.
+    - "Two provisioning phases now exist: base hardening at launch and project setup after boot."
+
+alternatives:
+  - name: Keep the existing Bash launch script
+    reason_rejected: >-
+      The current script mixes argument parsing, cloud-init generation, secret
+      rendering, and provisioning orchestration in one place. That complexity
+      is the main problem the transition is trying to remove.
+
+  - name: Replace Bash with a Rust CLI
+    reason_rejected: >-
+      Rust would work, but the immediate need is a thin orchestration CLI that
+      shells out to Multipass. Go provides a faster path to implementation with
+      simpler subprocess and config-handling ergonomics for this scope.
+
+  - name: Keep secrets injected through cloud-init write_files
+    reason_rejected: >-
+      This preserves the existing model, but it keeps the launch path tied to
+      generated cloud-init content and prevents the CLI from staying thin.
+      Post-boot transfer is simpler for a startup-only tool when scoped to the
+      exact files needed for the session.
+
+references:
+  - ADR-0001
+  - docs/constraints.yaml
+  - https://developer.nvidia.com/blog/practical-security-guidance-for-sandboxing-agentic-workflows-and-managing-execution-risk/

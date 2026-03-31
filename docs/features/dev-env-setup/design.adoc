@@ -1,36 +1,66 @@
 = Design: Dev Environment Setup
-:version: 2.0.0
-:source-spec-version: 2.0.0
+:version: 3.0.0
+:source-spec-version: 3.0.0
 :status: Current
-:last-updated: 2026-03-28
+:last-updated: 2026-03-31
 :feature: dev-env-setup
 :toc:
 
 == Technical Context
 
-This feature creates an isolated development environment for agentic coding tools by launching a fresh Multipass VM and provisioning it with cloud-init. The simplified design now relies on VM isolation as the primary boundary rather than in-guest filesystem MAC controls or a project-managed teardown workflow.
+This feature provisions an isolated development environment for agentic coding
+work by creating a Multipass VM from a project-local `devvm.yaml` file. The
+prior design centered on a flag-driven Bash script that generated cloud-init
+content dynamically. The new design keeps Multipass and static cloud-init as
+the base hardening layer, but moves project-specific setup into a thin Go CLI
+that performs post-boot provisioning with `multipass transfer` and
+`multipass exec`.
 
-Key security principles:
+The intent is to keep startup simple without weakening the existing security
+model:
 
-* **Kernel isolation**: Full VM virtualization separates agent execution from the host kernel.
-* **No host mounts**: Repositories are cloned inside the VM instead of mounted from the host.
-* **Network egress controls**: UFW applies a default-deny outbound policy with port-level allow rules for essential traffic (443, 22, 53).
-* **Secret injection**: Credentials are written into the VM by cloud-init instead of inherited from the host environment.
-* **Non-root execution**: OpenCode runs as the `opencode` user with no administrative privileges.
+* Multipass remains the primary isolation boundary.
+* Host directories are never mounted into the guest.
+* SSH remains disabled.
+* The guest runtime remains non-root.
+* UFW still enforces a default-deny network posture with explicit allow rules.
+* Only scoped provisioning files are delivered into the guest during setup.
 
 == Decisions and Constraints
 
-* ADR-0001: Use Multipass VM for Secure Agentic AI Development Environment (see `docs/adrs/0001-multipass-sandbox.yaml`)
+* ADR-0002: Use a Go Create CLI for Config-Driven Multipass Startup (see `docs/adrs/0002-go-create-cli-for-config-driven-multipass-startup.yaml`)
+* ADR-0001: Use Multipass VM for Secure Agentic AI Development Environment (superseded, historical context only)
 
 Relevant constraints from `docs/constraints.yaml`:
 
 * C-001: No host directory mounts
 * C-002: Network egress restricted to essential ports via UFW
-* C-003: Secret injection via cloud-init write_files
+* C-003: Secrets delivered through scoped provisioning files, not host env vars or mounts
 * C-004: SSH disabled
 * C-005: Non-root user execution
 * C-008: No host credential exposure
-* C-010-C-016: Supply chain integrity controls
+* C-010 through C-016: Supply chain integrity controls
+
+== Research and Unknowns
+
+Research during this transition found that the remaining complexity was mostly
+in host-side orchestration, not in Multipass itself. The design therefore uses
+Multipass-native primitives directly:
+
+* `multipass launch` for fresh instances
+* `multipass clone` for optional base-instance reuse
+* `multipass transfer` for scoped file delivery
+* `multipass exec` for post-boot provisioning
+
+The CLI is intentionally narrow:
+
+* one user-facing command: `create`
+* one project config file: `devvm.yaml`
+* no general configuration-management behavior
+
+No unresolved research unknowns remain for implementation. The main open point
+for future evolution is whether a reusable base instance should be built and
+managed by the same tool or kept as a manual operational step.
 
 == System Design
 
@@ -40,189 +70,237 @@ Relevant constraints from `docs/constraints.yaml`:
 ----
 flowchart LR
     subgraph Host["Host Machine"]
-        LS[launch.sh]
-        ENV[secrets.env]
+        CFG[devvm.yaml]
+        CLI[create CLI]
+        SEC[secrets.env]
+        BOOT[bootstrap-guest.sh]
+        TPL[OpenCode config template]
     end
 
-    subgraph Multipass["Multipass Daemon"]
-        CMD[multipass launch]
+    subgraph MP["Multipass"]
+        LAUNCH[multipass launch]
+        CLONE[multipass clone]
+        XFER[multipass transfer]
+        EXEC[multipass exec]
         SHELL[multipass shell]
     end
 
-    subgraph VM["Multipass VM (Ubuntu 24.04)"]
-        subgraph Init["cloud-init"]
-            PKG[Package Install]
-            USER[opencode user]
-            UFW_INIT[UFW Setup]
-            OPENCODE[OpenCode CLI]
-        end
-
-        subgraph Runtime["Runtime"]
-            WS[/home/opencode/workspace/]
-            UFW_RT[UFW rules]
-            GIT[git]
-            PY[Python]
-            NPM[Node.js]
-        end
+    subgraph VM["Guest VM"]
+        CI[static cloud-init]
+        UFW[UFW rules]
+        USER[guest user]
+        REPO[repo checkout]
+        OC[OpenCode config]
+        BC[bootstrap execution]
     end
 
-    subgraph External["External Services"]
-        GH[GitHub/GitLab]
-        LLM[OpenAI/OpenCode APIs]
-        PKGREG[Package Registries]
-    end
-
-    LS -->|reads| ENV
-    LS -->|invokes| CMD
-    CMD -->|cloud-init| Init
-    ENV -->|secrets| Init
-
-    Init --> Runtime
-    Runtime --> WS
-    Runtime --> UFW_RT
-
-    SHELL -->|interactive| WS
-
-    UFW_RT -->|port 22, 443| GH
-    UFW_RT -->|port 443| LLM
-    UFW_RT -->|port 443| PKGREG
+    CFG --> CLI
+    SEC --> CLI
+    BOOT --> CLI
+    TPL --> CLI
+    CLI --> LAUNCH
+    CLI --> CLONE
+    LAUNCH --> CI
+    CLONE --> CI
+    CLI --> XFER
+    CLI --> EXEC
+    CI --> UFW
+    CI --> USER
+    XFER --> OC
+    XFER --> BC
+    EXEC --> REPO
+    EXEC --> BC
+    SHELL --> USER
 ----
 
-=== Launch Flow
+=== Create Flow
 
 [source,mermaid]
 ----
 sequenceDiagram
     actor User
-    participant LS as launch.sh
+    participant CLI as create CLI
     participant MP as Multipass
-    participant CI as cloud-init
-    participant VM as Ubuntu VM
+    participant VM as Guest VM
 
-    User->>LS: ./launch.sh --repo URL --secrets file
-    LS->>LS: Parse arguments
-    LS->>LS: Validate secrets file
+    User->>CLI: create
+    CLI->>CLI: Read devvm.yaml
+    CLI->>CLI: Validate schema and paths
+    CLI->>CLI: Resolve launch source
 
-    alt --dry-run
-        LS-->>User: Display generated config only
-    else normal launch
-        LS->>LS: Read base.yaml and security.yaml
-        LS->>LS: Merge into single cloud-init document
-        LS->>MP: multipass launch --cloud-init
-        MP->>VM: Create VM
-        VM->>CI: Run cloud-init
-        CI->>VM: Install packages (including ufw)
-        CI->>VM: Create opencode user (with sudo for setup)
-        CI->>VM: Configure UFW (deny all, allow 443, 22, 53)
-        CI->>VM: Disable SSH
-        CI->>VM: Install OpenCode CLI
-        CI->>VM: Inject secrets and git config
-        CI->>VM: Clone repository
-        CI->>VM: Revoke sudo from opencode user
-        MP-->>LS: VM ready
-        LS-->>User: Ready message
+    alt base instance available
+        CLI->>MP: multipass clone <base>
+    else launch fresh VM
+        CLI->>MP: multipass launch --cloud-init base.yaml
     end
+
+    MP->>VM: Start guest
+    VM->>VM: Apply static cloud-init hardening
+    CLI->>MP: multipass transfer scoped files
+    CLI->>MP: multipass exec bootstrap steps
+    MP->>VM: Clone repo and configure guest
+    CLI-->>User: Ready message with VM name
 ----
 
 === Host Components
 
-==== launch.sh
+==== `devvm.yaml`
 
-`scripts/launch.sh` is the only project-managed entrypoint. It:
+`devvm.yaml` is the only required project input. It defines:
 
-* parses `--repo`, `--secrets`, `--name`, and `--dry-run`
-* validates the secrets file
-* reads `cloud-init/base.yaml` and `cloud-init/security.yaml` as source YAML rather than duplicating their content inline
-* appends a runcmd step that removes the `opencode` user from the `sudo` group after all setup commands complete
-* merges the above into a single cloud-init document
-* launches the VM through Multipass
-* reports the VM name and workspace path
+* instance sizing and optional naming
+* repository source and optional branch
+* optional base-instance preference
+* guest paths and user
+* provisioning file locations
+* security settings such as SSH disablement and allowed outbound ports
+* optional OpenCode config template location
 
-=== VM Components
+The CLI resolves relative paths from the config file directory so a project can
+remain self-contained.
 
-==== Base Provisioning (`cloud-init/base.yaml`)
+==== Create CLI
 
-The base layer installs packages from official Ubuntu repositories, creates the `opencode` user, and prepares the workspace, config, and `.ssh` directories.
+The Go CLI is a thin orchestrator, not a provisioning framework. Internally it
+is split into these responsibilities:
 
-==== Security Provisioning (`cloud-init/security.yaml`)
+* `config`: load and validate `devvm.yaml`
+* `source resolution`: decide clone vs fresh launch
+* `multipass`: run `launch`, `clone`, `transfer`, and `exec`
+* `provisioning`: stage the exact files required for guest setup
+* `verification`: confirm the environment is ready before success is reported
 
-The security layer configures UFW and hardens the VM:
+The command surface stays intentionally small. The only user-facing operation is
+`create`.
 
-* sets UFW default policy to deny all outgoing and incoming traffic
-* allows outbound port 443/tcp (HTTPS -- APIs, package registries, git over HTTPS)
-* allows outbound port 22/tcp (SSH -- git clone/push)
-* allows outbound port 53 (DNS resolution)
-* enables UFW
-* disables SSH daemon access so the VM is entered through `multipass shell`
-* locks the OpenCode config directory after secret injection
+==== Provisioning Inputs
 
-`launch.sh` appends a final runcmd step that revokes sudo privileges from the `opencode` user (`deluser opencode sudo`).
+The CLI reads three classes of host-side inputs:
 
-==== OpenCode Installation
+* `secrets.env` for runtime secrets and git identity
+* static guest bootstrap script for per-project setup
+* optional OpenCode config template for rendered guest config
 
-OpenCode is downloaded from the official release source, verified against a pinned SHA256 checksum, installed into `/usr/local/bin`, and validated with `opencode --version`.
+These files are validated before any VM creation begins when possible.
 
-==== Secret Injection
+=== Guest Components
 
-`launch.sh` reads the developer-provided secrets file and renders cloud-init `write_files` entries for:
+==== Static cloud-init
 
-* `/home/opencode/.config/opencode/config.yaml`
-* `/home/opencode/.gitconfig`
-* `/home/opencode/.ssh/known_hosts`
+`cloud-init/base.yaml` remains static and is responsible only for base guest
+hardening and readiness:
 
-Secrets exist only inside the VM after provisioning.
+* install packages from official Ubuntu repositories
+* create the non-root guest user
+* prepare guest directories
+* configure and enable UFW with default-deny rules and allowed outbound ports
+* disable SSH access
+
+Project-specific repository and secret material is no longer embedded into
+generated cloud-init content.
+
+==== Guest provisioning flow
+
+After the guest is ready, the CLI uses `multipass transfer` to copy only the
+files required for the session into the guest. A subsequent `multipass exec`
+invocation performs setup tasks such as:
+
+* render and place OpenCode config
+* write git config
+* seed known hosts if needed
+* clone the configured repository into `guest.repo_dir`
+* check out the configured branch if present
+* install or verify OpenCode in the guest
+* revoke any temporary administrative privileges from the runtime user
+
+This two-phase approach keeps base VM creation stable while allowing project
+setup to vary by config.
+
+=== Config Schema
+
+The config contract is represented by `devvm.yaml` and validated against a
+schema. The top-level sections are:
+
+* `instance`
+* `source`
+* `base`
+* `guest`
+* `provisioning`
+* `secrets`
+* `security`
+* `opencode`
+
+Validation handled by the CLI includes:
+
+* schema conformance
+* required file existence for referenced host paths
+* valid Multipass-compatible instance names
+* positive resource sizing values
+* `guest.repo_dir` contained within `guest.workspace_dir`
+* `base.instance_name` present when `base.enabled` is true
+
+=== Failure Handling
+
+The CLI stops on the first failed precondition that would otherwise create an
+invalid or half-configured environment.
+
+Failure classes:
+
+* config missing or invalid before VM creation
+* required host file missing before VM creation
+* base instance unavailable, causing logged fallback to fresh launch
+* file transfer failure after VM creation
+* bootstrap or repository clone failure after VM creation
+* checksum validation failure for OpenCode installation
+
+Post-creation failures are surfaced directly with the VM name so the developer
+can inspect or remove the instance manually.
 
 == Requirement Resolution
 
-=== US-001: Launch Secure Dev Environment
+=== US-001: Create Environment from Project Config
 
-Components:: `scripts/launch.sh`, Multipass, `cloud-init/base.yaml`
+Components:: `devvm.yaml`, create CLI config loader, Multipass adapter
 Requirements::
-* DEV-001: `launch.sh` invokes `multipass launch` with Ubuntu 24.04.
-* DEV-002: cloud-init creates the non-root `opencode` user.
-* DEV-003: `--dry-run` prints generated configuration without launching a VM.
-* DEV-004: launch aborts if the secrets file is missing or unreadable.
+* DEV-001: The create CLI reads `devvm.yaml` and uses its values to drive VM creation.
+* DEV-002: Preflight validation rejects missing or unreadable config before invoking Multipass.
+* DEV-003: Schema validation reports the invalid field and aborts before VM creation.
+* DEV-004: The source-resolution step derives a valid instance name from the repository when `instance.name` is absent.
 
-=== US-002: Configure OpenCode with Secrets
+=== US-002: Choose the Startup Source Automatically
 
-Components:: `scripts/launch.sh`, `cloud-init/security.yaml`, secrets file
+Components:: source resolution logic, Multipass adapter
 Requirements::
-* DEV-005: cloud-init installs OpenCode from the official source.
-* DEV-006: installation includes SHA256 verification before placement in `/usr/local/bin`.
-* DEV-007: secrets are written into the VM through cloud-init `write_files`.
-* DEV-008: the VM starts from a clean environment instead of inheriting host variables.
+* DEV-005: The source resolver selects `multipass clone` when a configured base instance is available.
+* DEV-006: The source resolver falls back to `multipass launch` with the configured Ubuntu release and reports that fallback.
 
-=== US-003: Work on Git Repositories
+=== US-003: Provision the Guest with Scoped Inputs
 
-Components:: `scripts/launch.sh`, `cloud-init/base.yaml`, `cloud-init/security.yaml`
+Components:: provisioning input loader, transfer stage, bootstrap execution, repository setup
 Requirements::
-* DEV-009: `launch.sh` clones the requested repository into `/home/opencode/workspace`.
-* DEV-010: GitHub and GitLab host keys are pre-seeded in `known_hosts`.
-* DEV-011: git user name and email come from the secrets file.
+* DEV-007: Provisioning delivers only configured files into the guest and does not inherit host environment variables.
+* DEV-008: Preflight validation rejects missing or unreadable secrets input before VM creation.
+* DEV-009: The template-rendering and transfer path creates the OpenCode config file at the configured guest destination.
+* DEV-010: The bootstrap execution stage clones the configured repository into `guest.repo_dir`.
+* DEV-011: The bootstrap execution stage checks out the configured branch when one is provided.
 
-=== US-004: Restrict Network Access
+=== US-004: Preserve Secure Runtime Defaults
 
-Components:: `cloud-init/security.yaml`
+Components:: static cloud-init, bootstrap execution, guest verification
 Requirements::
-* DEV-012: `security.yaml` runcmd configures UFW to deny all outbound and inbound traffic by default.
-* DEV-013: UFW rule allows outbound port 22/tcp for SSH git operations.
-* DEV-014: UFW rule allows outbound port 443/tcp for HTTPS (APIs, registries, git).
-* DEV-015: UFW rule allows outbound port 53 for DNS resolution.
+* DEV-012: Static cloud-init and guest verification ensure the runtime user matches `guest.user` and is non-root.
+* DEV-013: The final bootstrap hardening step leaves the runtime user without administrative privileges.
+* DEV-014: Static cloud-init configures firewall defaults to deny inbound and outbound traffic.
+* DEV-015: Firewall provisioning applies allow rules only for ports listed in `security.allowed_outbound_ports`.
+* DEV-016: Static cloud-init disables SSH while preserving `multipass shell` access.
 
-=== US-005: Verify Supply Chain Integrity
+=== US-005: Verify OpenCode Supply Chain Integrity
 
-Components:: `cloud-init/base.yaml`, `cloud-init/security.yaml`
+Components:: bootstrap execution, OpenCode installer, guest verification
 Requirements::
-* DEV-018: apt packages come only from official Ubuntu repositories.
-* DEV-019: Python package installation supports hash-verified requirements.
-* DEV-020: OpenCode installation validates the pinned checksum before install.
-* DEV-021: checksum mismatch aborts initialization.
-
-=== US-006: Harden Runtime Privileges
-
-Components:: `scripts/launch.sh`, `cloud-init/base.yaml`
-Requirements::
-* DEV-022: The final runcmd step generated by `launch.sh` runs `deluser opencode sudo` to remove the `opencode` user from the sudo group. The user retains sudo during cloud-init execution (needed for package installation, UFW, service management) but loses it before the VM is handed to the developer.
+* DEV-017: OpenCode installation completes before the CLI reports success.
+* DEV-018: The installer verifies the expected checksum before install.
+* DEV-019: A checksum mismatch aborts setup and reports a failure.
 
 == File Structure
 
@@ -230,13 +308,18 @@ Requirements::
 ----
 multipass-devenv/
 ├── cloud-init/
-│   ├── base.yaml
-│   └── security.yaml
+│   └── base.yaml
+├── cmd/
+│   └── devvm/
+│       └── main.go
+├── internal/
+│   ├── config/
+│   ├── multipass/
+│   ├── provisioning/
+│   └── create/
 ├── scripts/
-│   ├── launch.sh
-│   ├── inject-secrets.sh
-│   └── validate.sh
-└── templates/
-    ├── opencode-config.yaml.j2
-    └── requirements.pinned.txt.j2
+│   └── bootstrap-guest.sh
+├── templates/
+│   └── opencode-config.yaml.j2
+└── devvm.yaml
 ----

@@ -3,276 +3,265 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "2.0.0"
-last_updated: "2026-03-28"
+version: "3.0.0"
+last_updated: "2026-03-31"
 
 constraint_notes:
   - constraint: "The system SHALL NOT mount host directories into the VM."
     category: Security
     note: >-
-      C-001 enforces no host mounts. Repositories are cloned inside the VM,
-      not mounted from the host.
+      C-001 forbids host directory mounts. The config file may describe host
+      paths for provisioning inputs, but those files are copied into the guest
+      during setup rather than mounted.
 
   - constraint: "The system SHALL restrict network egress to essential ports via UFW."
     category: Security
     note: >-
-      C-002 provides port-level network filtering via UFW. Requirements
-      specify the allowed outbound ports (443, 22, 53).
+      C-002 defines UFW as the egress control mechanism. This spec only defines
+      how the configured allowed ports are applied during environment creation.
 
-  - constraint: "The system SHALL inject secrets via cloud-init write_files, not environment variables or host mounts."
+  - constraint: "The system SHALL inject secrets into the VM through scoped provisioning files, not environment variables or host mounts."
     category: Security
     note: >-
-      C-003 mandates secret delivery through cloud-init rather than inherited
-      host environment variables.
+      C-003 governs secret delivery. This spec describes when the create
+      command reads the configured secrets file and provisions only the
+      required guest files.
 
   - constraint: "The system SHALL disable SSH access to the VM."
     category: Security
     note: >-
-      C-004 ensures access happens through Multipass-managed shell sessions only.
+      C-004 keeps VM access on the Multipass control path. The feature does not
+      duplicate SSH policy beyond the observable startup behavior.
 
   - constraint: "The system SHALL run OpenCode as a non-root user."
     category: Security
     note: >-
-      C-005 requires a dedicated non-root execution context inside the VM.
-      DEV-022 strengthens this by revoking administrative privileges after
-      setup completes, so the runtime user cannot escalate.
+      C-005 requires a non-root runtime identity. DEV-013 verifies that the
+      configured guest user does not retain administrative privileges after
+      setup completes.
 
 stories:
   - id: US-001
-    title: Launch Secure Dev Environment
+    title: Create Environment from Project Config
     narrative:
       as_a: developer
-      i_want: to spin up a secure development VM quickly
-      so_that: I can start coding with AI assistance without manual setup
+      i_want: to create the dev environment from a checked-in project config file
+      so_that: I can start a secure VM with one consistent command
     requirements:
       - id: DEV-001
         text: >-
-          When the launch script is invoked, the system shall launch a fresh
-          Multipass VM with Ubuntu 24.04 LTS.
+          When the developer runs the create command in a directory containing
+          `devvm.yaml`, the system shall create a Multipass VM using the values
+          defined in that file.
         ears_type: event-driven
         verification: >-
-          Run `./scripts/launch.sh --repo <url> --secrets <file>`.
-          Confirm that a new Multipass VM instance is created with Ubuntu 24.04 LTS.
+          Place a valid `devvm.yaml` in a test directory and run the create
+          command there. Confirm that a new VM is created and that its name,
+          CPU count, memory, and disk settings match the configuration.
 
       - id: DEV-002
         text: >-
-          When the VM initializes, the system shall create a non-root user
-          named "opencode" for agent execution.
-        ears_type: event-driven
+          If `devvm.yaml` is missing or unreadable, then the system shall
+          display an error and abort before creating a VM.
+        ears_type: unwanted-behavior
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute `whoami`.
-          Confirm the default user is "opencode", not root.
+          Run the create command in a directory without `devvm.yaml`, then
+          repeat with unreadable permissions on the file. Confirm the command
+          fails with an error and `multipass list` shows no new VM.
 
       - id: DEV-003
         text: >-
-          When the --dry-run flag is provided, the system shall display
-          the configuration that would be applied without creating a VM.
-        ears_type: event-driven
+          If `devvm.yaml` does not conform to the supported schema, then the
+          system shall identify the invalid field and abort before creating a VM.
+        ears_type: unwanted-behavior
         verification: >-
-          Run `./scripts/launch.sh --dry-run --repo <url> --secrets <file>`.
-          Confirm output shows VM configuration without creating an instance.
-          Run `multipass list` to verify no new VM was created.
+          Set an invalid value such as `instance.cpus: 0` in `devvm.yaml` and
+          run the create command. Confirm the command fails with a validation
+          error that identifies the invalid field and no VM is created.
 
       - id: DEV-004
         text: >-
-          If the --secrets file is missing or unreadable, the system shall
-          display an error and abort the launch.
+          If `instance.name` is omitted from `devvm.yaml`, then the system shall
+          generate a valid VM name derived from the configured repository.
         ears_type: unwanted-behavior
         verification: >-
-          Run `./scripts/launch.sh --repo <url> --secrets nonexistent.env`.
-          Confirm an error message is displayed and no VM is created.
+          Remove `instance.name` from a valid config and run the create command.
+          Confirm the VM is created successfully and the reported VM name is a
+          valid Multipass instance name derived from the repository name.
 
   - id: US-002
-    title: Configure OpenCode with Secrets
+    title: Choose the Startup Source Automatically
     narrative:
       as_a: developer
-      i_want: OpenCode CLI preconfigured with my API keys
-      so_that: I can start using AI coding assistance immediately
+      i_want: the startup flow to choose the fastest valid source automatically
+      so_that: I get simple startup without manually deciding between launch and clone
     requirements:
       - id: DEV-005
         text: >-
-          The system shall install OpenCode CLI from the official source
-          during VM initialization.
-        ears_type: ubiquitous
+          When `base.enabled` is true and the configured base instance is
+          available, the system shall create the environment from that base
+          instance instead of launching a fresh Ubuntu image.
+        ears_type: event-driven
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `opencode --version`. Confirm OpenCode CLI is installed and
-          reports a valid version.
+          Configure `base.enabled: true` with an existing stopped base
+          instance, run the create command, and confirm the resulting VM is
+          created from the configured base instance.
 
       - id: DEV-006
         text: >-
-          The system shall verify the OpenCode CLI checksum against
-          the expected hash before installation.
-        ears_type: ubiquitous
+          If `base.enabled` is true and the configured base instance is not
+          available, then the system shall launch a fresh Ubuntu VM using
+          `instance.ubuntu_release` and report that fallback to the developer.
+        ears_type: unwanted-behavior
         verification: >-
-          Review the cloud-init log via `multipass shell <name>` and
-          check `/var/log/cloud-init-output.log`. Confirm checksum
-          verification passed before installation.
+          Configure `base.enabled: true` with a missing base instance, run the
+          create command, and confirm the command reports the fallback and
+          creates a fresh VM with the configured Ubuntu release.
 
+  - id: US-003
+    title: Provision the Guest with Scoped Inputs
+    narrative:
+      as_a: developer
+      i_want: only the files needed for the current session copied into the guest
+      so_that: the VM is ready without exposing the host environment
+    requirements:
       - id: DEV-007
         text: >-
-          When secrets are provided via the --secrets file, the system
-          shall inject them into the OpenCode configuration.
+          When the VM becomes ready, the system shall provision the configured
+          secrets file and bootstrap inputs into the guest without inheriting
+          host environment variables.
         ears_type: event-driven
         verification: >-
-          Provide a secrets file with API keys. After VM launch, run
-          `multipass shell <name>` and check `/home/opencode/.config/opencode/`.
-          Confirm secrets are present in the configuration.
+          Set a test environment variable on the host, run the create command,
+          and inspect the guest. Confirm the configured provisioning files are
+          present in the guest and the host test variable is absent from the
+          guest environment.
 
       - id: DEV-008
         text: >-
-          The system shall not inherit or expose host environment variables
-          in the VM.
-        ears_type: ubiquitous
+          If the configured secrets file is missing or unreadable, then the
+          system shall display an error and abort before creating a VM.
+        ears_type: unwanted-behavior
         verification: >-
-          Set a test environment variable on the host (e.g., TEST_SECRET=exposed).
-          Launch the VM. Inside the VM, run `env | grep TEST_SECRET`.
-          Confirm no output (variable not present).
+          Point `secrets.env_file` at a missing file and run the create
+          command. Confirm the command fails with an error and no VM is created.
 
-  - id: US-003
-    title: Work on Git Repositories
-    narrative:
-      as_a: developer
-      i_want: to clone and work on my repositories inside the VM
-      so_that: the AI agent has isolated access without host filesystem exposure
-    requirements:
       - id: DEV-009
         text: >-
-          When the --repo argument is provided with a git URL, the system
-          shall clone the repository inside the VM workspace.
+          When `opencode.config_template` and `opencode.config_path` are
+          configured, the system shall create the OpenCode configuration file in
+          the guest at the configured path.
         ears_type: event-driven
         verification: >-
-          Run `./scripts/launch.sh --repo https://github.com/example/repo.git --secrets <file>`.
-          After launch, run `multipass shell <name>` and navigate to
-          `/home/opencode/workspace/`. Confirm the repository was cloned.
+          Provide an OpenCode template and destination path in `devvm.yaml`,
+          run the create command, and confirm the guest contains the rendered
+          configuration file at the configured path.
 
       - id: DEV-010
         text: >-
-          The system shall pre-seed SSH host keys for GitHub and GitLab
-          to enable secure cloning without manual verification.
-        ears_type: ubiquitous
+          When `source.repo` is configured, the system shall clone that
+          repository into `guest.repo_dir` inside the guest.
+        ears_type: event-driven
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `ssh -T git@github.com` and `ssh -T git@gitlab.com`.
-          Confirm no host key verification prompt appears.
+          Run the create command with a reachable repository URL in
+          `source.repo` and confirm the repository exists inside
+          `guest.repo_dir` in the guest.
 
       - id: DEV-011
         text: >-
-          When git configuration is provided in the secrets file, the system
-          shall configure git with the user name and email from that file.
+          When `source.branch` is configured, the system shall check out that
+          branch in the cloned repository.
         ears_type: event-driven
         verification: >-
-          Provide git credentials in the secrets file. After VM launch,
-          run `multipass shell <name>` and execute `git config --global user.name`
-          and `git config --global user.email`. Confirm values match
-          the secrets file.
+          Set `source.branch` to a non-default branch in `devvm.yaml`, run the
+          create command, and confirm the repository inside the guest is on the
+          configured branch.
 
   - id: US-004
-    title: Restrict Network Access
+    title: Preserve Secure Runtime Defaults
     narrative:
       as_a: developer
-      i_want: network access limited to essential ports
-      so_that: compromised agents have restricted ability to exfiltrate data or establish remote shells
+      i_want: the created environment to keep the same secure runtime posture
+      so_that: startup stays simple without weakening the isolation model
     requirements:
       - id: DEV-012
         text: >-
-          The system shall configure UFW to deny all outbound and inbound
-          traffic by default.
+          The system shall create the guest runtime as the non-root user
+          configured by `guest.user`.
         ears_type: ubiquitous
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `sudo ufw status verbose`. Confirm the default policy is
-          deny (incoming) and deny (outgoing).
+          After the VM is created, enter it and run `whoami`. Confirm the
+          active user matches `guest.user` and is not `root`.
 
       - id: DEV-013
         text: >-
-          The system shall allow outbound connections on port 22 (SSH).
-        ears_type: ubiquitous
+          When guest setup completes, the system shall ensure the configured
+          guest user cannot execute commands with administrative privileges.
+        ears_type: event-driven
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `sudo ufw status`. Confirm a rule allowing outbound 22/tcp
-          exists. Test with `ssh -T git@github.com` to confirm SSH
-          git operations succeed.
+          After the VM is created, enter it as the configured guest user and
+          run `sudo -n true`. Confirm the command fails.
 
       - id: DEV-014
         text: >-
-          The system shall allow outbound connections on port 443 (HTTPS).
+          The system shall configure the guest firewall to deny inbound and
+          outbound traffic by default.
         ears_type: ubiquitous
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `sudo ufw status`. Confirm a rule allowing outbound 443/tcp
-          exists. Test with `curl https://github.com` to confirm HTTPS
-          connections succeed.
+          After the VM is created, inspect the guest firewall configuration and
+          confirm both inbound and outbound default policies are deny.
 
       - id: DEV-015
         text: >-
-          The system shall allow outbound DNS traffic on port 53.
+          The system shall allow outbound network connections only on the ports
+          listed in `security.allowed_outbound_ports`.
         ears_type: ubiquitous
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `sudo ufw status`. Confirm a rule allowing outbound 53
-          exists. Test with `dig github.com` to confirm DNS resolution
-          works.
+          Configure a known list of allowed outbound ports in `devvm.yaml`, run
+          the create command, and confirm the guest firewall contains allow
+          rules for only those ports.
+
+      - id: DEV-016
+        text: >-
+          When `security.disable_ssh` is true, the system shall disable SSH
+          access to the guest.
+        ears_type: event-driven
+        verification: >-
+          Set `security.disable_ssh: true`, run the create command, and confirm
+          the guest SSH service is disabled and the VM is still accessible via
+          `multipass shell`.
 
   - id: US-005
-    title: Verify Supply Chain Integrity
+    title: Verify OpenCode Supply Chain Integrity
     narrative:
       as_a: developer
-      i_want: all installed software verified for integrity
-      so_that: I can trust the development environment hasn't been tampered with
+      i_want: the OpenCode toolchain verified during environment setup
+      so_that: I can trust the runtime delivered into the guest
     requirements:
-      - id: DEV-018
+      - id: DEV-017
         text: >-
-          The system shall install apt packages only from official
-          Ubuntu repositories.
+          The system shall install OpenCode CLI from its official distribution
+          source before the create command reports success.
         ears_type: ubiquitous
         verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `cat /etc/apt/sources.list`. Confirm only official Ubuntu
-          repositories are listed (no PPAs).
+          Run the create command and confirm `opencode --version` succeeds in
+          the guest before the command reports a ready environment.
+
+      - id: DEV-018
+        text: >-
+          The system shall verify the OpenCode CLI checksum against the
+          configured expected value before installation.
+        ears_type: ubiquitous
+        verification: >-
+          Review the guest setup log after a successful create operation and
+          confirm checksum verification completed before OpenCode installation.
 
       - id: DEV-019
         text: >-
-          When a requirements file with hashes is provided, the system shall
-          verify Python package hashes during installation.
-        ears_type: event-driven
-        verification: >-
-          Provide a requirements file with hash pins. After VM launch,
-          check the pip installation log. Confirm hash verification
-          was performed for each package.
-
-      - id: DEV-020
-        text: >-
-          The system shall install OpenCode CLI only after verifying
-          the SHA256 checksum matches the expected value.
-        ears_type: ubiquitous
-        verification: >-
-          Review the cloud-init log. Confirm the checksum verification step
-          passed before OpenCode was moved to /usr/local/bin/.
-
-      - id: DEV-021
-        text: >-
-          If OpenCode checksum verification fails, the system shall
-          abort VM initialization and display an error.
+          If OpenCode checksum verification fails, then the system shall abort
+          environment setup and report an error.
         ears_type: unwanted-behavior
         verification: >-
-          Simulate checksum mismatch by modifying the download URL or
-          checksum in cloud-init (requires integration test). Confirm
-          VM initialization aborts with appropriate error.
-
-  - id: US-006
-    title: Harden Runtime Privileges
-    narrative:
-      as_a: developer
-      i_want: the agent user to have no administrative privileges after setup
-      so_that: a compromised agent cannot escalate privileges to bypass security controls
-    requirements:
-      - id: DEV-022
-        text: >-
-          When VM initialization completes, the system shall revoke
-          administrative privileges from the opencode user.
-        ears_type: event-driven
-        verification: >-
-          After VM launch, run `multipass shell <name>` and execute
-          `sudo -n true 2>&1`. Confirm the command fails, indicating
-          the opencode user cannot execute commands with elevated privileges.
+          Configure an invalid expected checksum for OpenCode and run the
+          create command. Confirm the command fails and reports checksum
+          verification failure.

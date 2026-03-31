@@ -1,5 +1,19 @@
 = State Transition Log
-:last-updated: 2026-03-28
+:last-updated: 2026-03-31
+
+== TRANSITION-005
+:date: 2026-03-31
+:intent: Replace the launch script with a Go create CLI driven by a project config schema
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: A single Go `create` command reads `devvm.yaml`, launches or clones a Multipass VM, transfers scoped setup files post-boot, and provisions the guest without a flag-driven Bash entrypoint
+:prior-state: `scripts/launch.sh` reads flags, renders cloud-init dynamically, injects secrets via cloud-init write_files, and performs launch-time orchestration in Bash
+:capabilities-planned: needs-adr, needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked:
+:constraints-checked:
+:result: In Progress
+:artifacts-modified:
 
 == TRANSITION-004
 :date: 2026-03-28

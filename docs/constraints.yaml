@@ -27,12 +27,15 @@ categories:
 
       - id: C-003
         text: >-
-          The system SHALL inject secrets via cloud-init write_files,
-          not environment variables or host mounts.
+          The system SHALL inject secrets into the VM through scoped
+          provisioning files, not environment variables or host mounts.
         rationale: >-
           Environment variables are visible to all processes in the VM.
-          Secrets injected via cloud-init exist only in the VM and are
-          destroyed with it. This follows NVIDIA's secret injection guidance.
+          Scoped provisioning files delivered during VM setup keep secrets
+          out of the host environment and limit exposure to only the files
+          needed inside the guest. This follows NVIDIA's secret injection
+          guidance while allowing either launch-time cloud-init delivery or
+          controlled post-boot transfer.
         added: "2026-03-25"
 
       - id: C-004
@@ -163,4 +166,3 @@ categories:
           vector. Automated scanning during VM setup catches issues
           before they can be exploited.
         added: "2026-03-25"
-

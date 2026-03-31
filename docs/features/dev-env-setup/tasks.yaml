@@ -2,56 +2,90 @@
 
 schema_version: "3.0.0"
 feature: dev-env-setup
-version: "3.0.0"
-status: Implemented
-source_design_version: "2.0.0"
-source_spec_version: "2.0.0"
-last_updated: "2026-03-28"
+version: "4.0.0"
+status: Current
+source_design_version: "3.0.0"
+source_spec_version: "3.0.0"
+last_updated: "2026-03-31"
+
 overview: >-
-  Simplify network filtering by replacing domain-level iptables with UFW
-  port-level rules. Three tasks: replace iptables with UFW in security.yaml,
-  strip network complexity from launch.sh, and delete the whitelist config.
-  TASK-001 and TASK-002 are independent roots. TASK-003 depends on TASK-002.
+  Replace the Bash launch flow with a thin Go `create` CLI driven by
+  `devvm.yaml`. Six tasks: add the config schema and loader, add Multipass
+  orchestration, add guest provisioning assets, wire the create command,
+  retire the old Bash-first workflow in docs/assets, and validate the new
+  behavior. TASK-001, TASK-002, and TASK-003 are root tasks. TASK-004 depends
+  on the first three, TASK-005 depends on TASK-004, and TASK-006 depends on
+  TASK-004 and TASK-005.
 
 tasks:
   - id: TASK-001
-    title: Replace iptables with UFW in security.yaml
+    title: Add devvm config schema and loader
     depends_on: []
-    components: [cloud-init/security.yaml, cloud-init/base.yaml]
-    stories: [US-004]
-    requirements: [DEV-012, DEV-013, DEV-014, DEV-015]
-    done: true
+    components: [devvm.yaml, internal/config, cmd/devvm]
+    stories: [US-001]
+    requirements: [DEV-001, DEV-002, DEV-003, DEV-004]
     description: >-
-      Replace the iptables default-deny skeleton and placeholder in
-      security.yaml with UFW runcmd entries: ufw default deny outgoing,
-      ufw default deny incoming, ufw allow out 443/tcp, ufw allow out 22/tcp,
-      ufw allow out 53, ufw --force enable. In base.yaml, replace
-      iptables and iptables-persistent packages with ufw.
+      Add the `devvm.yaml` config contract, JSON schema, and Go config loading
+      and validation code. Resolve relative paths from the config location,
+      validate required fields and value formats, and support auto-generated VM
+      names when `instance.name` is absent.
 
   - id: TASK-002
-    title: Remove network complexity from launch.sh
+    title: Add Multipass source resolution and command runner
     depends_on: []
-    components: [scripts/launch.sh]
-    stories: [US-001, US-004]
-    requirements: [DEV-001, DEV-003, DEV-012]
-    done: true
+    components: [internal/multipass, internal/create]
+    stories: [US-002, US-004]
+    requirements: [DEV-005, DEV-006, DEV-014, DEV-015, DEV-016]
     description: >-
-      Remove from launch.sh: --network flag and NETWORK_FILE variable,
-      validate_network_file(), parse_dns_servers(), parse_egress_entries(),
-      resolve_domain(), generate_network_rules(), and the placeholder
-      injection logic in generate_cloud_init(). Remove all references to
-      network whitelist from print_usage(). The generate_cloud_init()
-      function should simply merge base.yaml and security.yaml runcmd
-      without inserting dynamic rules.
+      Implement Go helpers for `multipass launch`, `multipass clone`,
+      `multipass transfer`, `multipass exec`, and source selection. Support
+      fallback from base clone to fresh launch, pass the configured Ubuntu
+      release and resource sizing, and keep static cloud-init as the hardening
+      entrypoint for firewall and SSH controls.
 
   - id: TASK-003
-    title: Delete network whitelist config
-    depends_on: [TASK-002]
-    components: [config/network-whitelist.default.yaml]
-    stories: [US-004]
-    requirements: [DEV-012]
-    done: true
+    title: Add guest provisioning assets and bootstrap flow
+    depends_on: []
+    components: [cloud-init/base.yaml, scripts/bootstrap-guest.sh, templates/opencode-config.yaml.j2, internal/provisioning]
+    stories: [US-003, US-004, US-005]
+    requirements: [DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-017, DEV-018, DEV-019]
     description: >-
-      Delete config/network-whitelist.default.yaml and the config/ directory
-      (if empty after deletion). Remove DEFAULT_NETWORK variable from
-      launch.sh.
+      Refactor provisioning assets so base cloud-init only handles static guest
+      hardening and package setup, while a new bootstrap script handles repo
+      clone, optional branch checkout, OpenCode config placement, checksum
+      verification, and final privilege hardening after transfer.
+
+  - id: TASK-004
+    title: Wire the Go create command end to end
+    depends_on: [TASK-001, TASK-002, TASK-003]
+    components: [cmd/devvm, internal/create, internal/config, internal/multipass, internal/provisioning]
+    stories: [US-001, US-002, US-003, US-004, US-005]
+    requirements: [DEV-001, DEV-005, DEV-007, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-017, DEV-018, DEV-019]
+    description: >-
+      Implement the `create` command orchestration: load config, validate host
+      inputs, choose clone vs launch, wait for guest readiness, transfer scoped
+      files, run bootstrap, surface errors, and report success with the created
+      VM name.
+
+  - id: TASK-005
+    title: Retire the Bash-first startup path
+    depends_on: [TASK-004]
+    components: [scripts/launch.sh, README.md, secrets.env.example]
+    stories: [US-001, US-003]
+    requirements: [DEV-001, DEV-007, DEV-008]
+    description: >-
+      Remove or reduce the old `scripts/launch.sh` entrypoint so the repository
+      is centered on the Go `create` command and `devvm.yaml`. Update example
+      files and remove stale Bash-first assumptions that conflict with the new
+      workflow.
+
+  - id: TASK-006
+    title: Validate the create workflow and documentation
+    depends_on: [TASK-004, TASK-005]
+    components: [README.md, docs/features/dev-env-setup, docs/architecture.adoc]
+    stories: [US-001, US-002, US-003, US-004, US-005]
+    requirements: [DEV-001, DEV-003, DEV-006, DEV-008, DEV-015, DEV-016, DEV-019]
+    description: >-
+      Run artifact validators and code-level verification for the new CLI,
+      update user-facing documentation to describe `devvm.yaml` and `create`,
+      and ensure the documented verification steps match the implemented flow.

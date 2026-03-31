@@ -1,12 +1,17 @@
 # yaml-language-server: $schema=../../skills/needs-adr/schemas/adr-index.schema.json
 
 schema_version: "1.0.0"
-version: "1.0.0"
-last_updated: "2026-03-25"
+version: "1.1.0"
+last_updated: "2026-03-31"
 
 decisions:
   - id: ADR-0001
     title: Use Multipass VM for Secure Agentic AI Development Environment
-    status: Accepted
+    status: Superseded
     date: "2026-03-25"
     file: 0001-multipass-sandbox.yaml
+  - id: ADR-0002
+    title: Use a Go Create CLI for Config-Driven Multipass Startup
+    status: Accepted
+    date: "2026-03-31"
+    file: 0002-go-create-cli-for-config-driven-multipass-startup.yaml
