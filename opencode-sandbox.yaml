@@ -77,6 +77,7 @@ write_files:
       export WORKSPACE=/home/agent/workspace
       export XDG_CONFIG_HOME=/home/agent/.config
       export XDG_CACHE_HOME=/home/agent/.cache
+      export npm_config_cache=/home/agent/.npm
       cd "$WORKSPACE" 2>/dev/null || true
 
   # --- Restricted DNS to prevent DNS-based exfiltration ---
@@ -122,10 +123,12 @@ runcmd:
   - mkdir -p /home/agent/workspace
   - mkdir -p /home/agent/.config/opencode
   - mkdir -p /home/agent/.cache
+  - mkdir -p /home/agent/.npm
   - mkdir -p /home/agent/.local/bin
   - chown -R agent:agent /home/agent/workspace
   - chown -R agent:agent /home/agent/.config
   - chown -R agent:agent /home/agent/.cache
+  - chown -R agent:agent /home/agent/.npm
   - chown -R agent:agent /home/agent/.local
 
   # ── Lock agent home directory ──
