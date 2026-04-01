@@ -61,6 +61,21 @@ Enter the VM:
 multipass shell <vm-name>
 ```
 
+Launch OpenCode as the `agent` user:
+
+```bash
+sudo -iu agent
+opencode
+```
+
+Or run it directly from the host without opening an interactive shell first:
+
+```bash
+multipass exec <vm-name> -- sudo -iu agent -- opencode
+```
+
+The `agent` user's workspace is `/home/agent/workspace`.
+
 ## Config File
 
 `devvm.yaml` is validated against `schemas/devvm.schema.json`.
@@ -111,8 +126,8 @@ Expected results:
 
 - `whoami` prints the non-root guest user from `opencode-sandbox.yaml`
 - `sudo -n true` fails
-- UFW shows deny-by-default policies with only the cloud-init outbound allows
-- SSH is disabled
+- UFW shows deny-by-default policies with outbound allows plus inbound SSH for Multipass access
+- SSH remains available so `multipass exec` and `multipass shell` work
 
 ## Repository Layout
 

@@ -3,7 +3,7 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "4.0.0"
+version: "4.1.0"
 last_updated: "2026-04-01"
 
 constraint_notes:
@@ -19,11 +19,12 @@ constraint_notes:
       C-002 remains enforced by the checked-in cloud-init file rather than by
       dynamic CLI-generated firewall rules.
 
-  - constraint: "The system SHALL disable SSH access to the VM."
+  - constraint: "The system SHALL permit only the SSH access required for Multipass-managed guest operations."
     category: Security
     note: >-
-      C-004 remains part of the checked-in cloud-init file and is not restated
-      as CLI behavior.
+      C-004 is satisfied by the checked-in cloud-init firewall rules that keep
+      inbound traffic denied by default while allowing the SSH path Multipass
+      needs for guest operations.
 
   - constraint: "The system SHALL run OpenCode as a non-root user."
     category: Security
@@ -155,8 +156,10 @@ stories:
 
       - id: DEV-011
         text: >-
-          The system shall disable SSH access to the guest.
+          The system shall allow only the guest SSH access required for
+          Multipass-managed operations.
         ears_type: ubiquitous
         verification: >-
-          Run the create command and confirm the guest SSH service is disabled
-          and the VM is still accessible via `multipass shell`.
+          Run the create command and confirm UFW permits inbound TCP port 22
+          while the VM remains accessible via `multipass exec` and
+          `multipass shell`.

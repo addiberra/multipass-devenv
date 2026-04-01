@@ -22,7 +22,8 @@ categories:
         rationale: >-
           Port-level default-deny policy via UFW limits exfiltration and
           remote shell establishment by compromised agents. Outbound traffic
-          is allowed only on ports 443 (HTTPS), 22 (SSH), and 53 (DNS).
+          is allowed only on ports 443 (HTTPS), 22 (SSH), 53 (DNS), and 853
+          (DNS-over-TLS).
         added: "2026-03-28"
 
       - id: C-003
@@ -40,11 +41,13 @@ categories:
 
       - id: C-004
         text: >-
-          The system SHALL disable SSH access to the VM.
+          The system SHALL permit only the SSH access required for
+          Multipass-managed guest operations.
         rationale: >-
-          SSH access would require key management and creates an attack
-          surface. Access only via 'multipass shell' ensures the host
-          controls all entry points.
+          Multipass relies on guest SSH for launch-time readiness checks and
+          host-managed operations such as exec, transfer, and shell. Allowing
+          only that path keeps the workflow functional while avoiding broader
+          guest exposure through host mounts or extra provisioning channels.
         added: "2026-03-25"
 
       - id: C-005

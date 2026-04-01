@@ -76,6 +76,7 @@ write_files:
       export PATH=/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin
       export WORKSPACE=/home/agent/workspace
       export XDG_CONFIG_HOME=/home/agent/.config
+      export XDG_CACHE_HOME=/home/agent/.cache
       cd "$WORKSPACE" 2>/dev/null || true
 
   # --- Restricted DNS to prevent DNS-based exfiltration ---
@@ -120,9 +121,11 @@ runcmd:
   # ── Create agent workspace ──
   - mkdir -p /home/agent/workspace
   - mkdir -p /home/agent/.config/opencode
+  - mkdir -p /home/agent/.cache
   - mkdir -p /home/agent/.local/bin
   - chown -R agent:agent /home/agent/workspace
   - chown -R agent:agent /home/agent/.config
+  - chown -R agent:agent /home/agent/.cache
   - chown -R agent:agent /home/agent/.local
 
   # ── Lock agent home directory ──
@@ -136,9 +139,14 @@ runcmd:
   - ufw default deny outgoing
   - ufw default deny incoming
 
+  # Multipass uses guest SSH for exec/shell/readiness operations
+  - ufw allow in 22/tcp
+
   # DNS — only to Cloudflare resolvers
   - ufw allow out to 1.1.1.1 port 53 proto udp
   - ufw allow out to 1.0.0.1 port 53 proto udp
+  - ufw allow out to 1.1.1.1 port 853 proto tcp
+  - ufw allow out to 1.0.0.1 port 853 proto tcp
 
   # HTTPS — required for LLM API calls
   - ufw allow out to any port 443 proto tcp
