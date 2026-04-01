@@ -148,6 +148,11 @@ runcmd:
   - ufw allow out to 1.1.1.1 port 853 proto tcp
   - ufw allow out to 1.0.0.1 port 853 proto tcp
 
+  # Block access to RFC1918 networks even on otherwise allowed ports
+  - ufw deny out to 10.0.0.0/8
+  - ufw deny out to 172.16.0.0/12
+  - ufw deny out to 192.168.0.0/16
+
   # HTTPS — required for LLM API calls
   - ufw allow out to any port 443 proto tcp
 
