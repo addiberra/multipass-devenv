@@ -3,61 +3,52 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "3.0.0"
-last_updated: "2026-03-31"
+version: "4.0.0"
+last_updated: "2026-04-01"
 
 constraint_notes:
   - constraint: "The system SHALL NOT mount host directories into the VM."
     category: Security
     note: >-
-      C-001 forbids host directory mounts. The config file may describe host
-      paths for provisioning inputs, but those files are copied into the guest
-      during setup rather than mounted.
+      C-001 forbids host directory mounts. The MVP uses only checked-in inputs
+      passed to Multipass during launch.
 
   - constraint: "The system SHALL restrict network egress to essential ports via UFW."
     category: Security
     note: >-
-      C-002 defines UFW as the egress control mechanism. This spec only defines
-      how the configured allowed ports are applied during environment creation.
-
-  - constraint: "The system SHALL inject secrets into the VM through scoped provisioning files, not environment variables or host mounts."
-    category: Security
-    note: >-
-      C-003 governs secret delivery. This spec describes when the create
-      command reads the configured secrets file and provisions only the
-      required guest files.
+      C-002 remains enforced by the checked-in cloud-init file rather than by
+      dynamic CLI-generated firewall rules.
 
   - constraint: "The system SHALL disable SSH access to the VM."
     category: Security
     note: >-
-      C-004 keeps VM access on the Multipass control path. The feature does not
-      duplicate SSH policy beyond the observable startup behavior.
+      C-004 remains part of the checked-in cloud-init file and is not restated
+      as CLI behavior.
 
   - constraint: "The system SHALL run OpenCode as a non-root user."
     category: Security
     note: >-
-      C-005 requires a non-root runtime identity. DEV-013 verifies that the
-      configured guest user does not retain administrative privileges after
-      setup completes.
+      C-005 is satisfied by the guest setup baked into the checked-in cloud-init
+      file.
 
 stories:
   - id: US-001
     title: Create Environment from Project Config
     narrative:
       as_a: developer
-      i_want: to create the dev environment from a checked-in project config file
-      so_that: I can start a secure VM with one consistent command
+      i_want: to create a Multipass VM from a checked-in machine config file
+      so_that: I can start the environment with one repeatable command
     requirements:
       - id: DEV-001
         text: >-
           When the developer runs the create command in a directory containing
-          `devvm.yaml`, the system shall create a Multipass VM using the values
-          defined in that file.
+          `devvm.yaml`, the system shall create a Multipass VM using the machine
+          values defined in that file.
         ears_type: event-driven
         verification: >-
           Place a valid `devvm.yaml` in a test directory and run the create
           command there. Confirm that a new VM is created and that its name,
-          CPU count, memory, and disk settings match the configuration.
+          CPU count, memory, disk, and Ubuntu release match the configuration.
 
       - id: DEV-002
         text: >-
@@ -82,127 +73,69 @@ stories:
       - id: DEV-004
         text: >-
           If `instance.name` is omitted from `devvm.yaml`, then the system shall
-          generate a valid VM name derived from the configured repository.
+          generate a valid Multipass instance name derived from the current
+          working directory name.
         ears_type: unwanted-behavior
         verification: >-
           Remove `instance.name` from a valid config and run the create command.
           Confirm the VM is created successfully and the reported VM name is a
-          valid Multipass instance name derived from the repository name.
+          valid Multipass instance name derived from the working directory name.
 
   - id: US-002
-    title: Choose the Startup Source Automatically
+    title: Launch with a Checked-In Cloud-Init File
     narrative:
       as_a: developer
-      i_want: the startup flow to choose the fastest valid source automatically
-      so_that: I get simple startup without manually deciding between launch and clone
+      i_want: the create command to use a checked-in cloud-init file
+      so_that: the first MVP stays simple and easy to inspect
     requirements:
       - id: DEV-005
         text: >-
-          When `base.enabled` is true and the configured base instance is
-          available, the system shall create the environment from that base
-          instance instead of launching a fresh Ubuntu image.
+          When the developer runs the create command, the system shall launch a
+          fresh Ubuntu VM using `instance.ubuntu_release` and the cloud-init
+          file referenced by `devvm.yaml`.
         ears_type: event-driven
         verification: >-
-          Configure `base.enabled: true` with an existing stopped base
-          instance, run the create command, and confirm the resulting VM is
-          created from the configured base instance.
+          Run the create command with a valid config and confirm the VM is
+          launched from the configured Ubuntu release and that Multipass
+          receives the configured cloud-init file path.
 
       - id: DEV-006
         text: >-
-          If `base.enabled` is true and the configured base instance is not
-          available, then the system shall launch a fresh Ubuntu VM using
-          `instance.ubuntu_release` and report that fallback to the developer.
+          If the configured cloud-init file is missing, unreadable, or the VM
+          launch fails, then the system shall display an error and abort the
+          create command.
         ears_type: unwanted-behavior
         verification: >-
-          Configure `base.enabled: true` with a missing base instance, run the
-          create command, and confirm the command reports the fallback and
-          creates a fresh VM with the configured Ubuntu release.
+          Configure an invalid cloud-init path or otherwise cause launch to fail,
+          run the create command, and confirm the command reports the failure
+          instead of continuing.
 
   - id: US-003
-    title: Provision the Guest with Scoped Inputs
-    narrative:
-      as_a: developer
-      i_want: only the files needed for the current session copied into the guest
-      so_that: the VM is ready without exposing the host environment
-    requirements:
-      - id: DEV-007
-        text: >-
-          When the VM becomes ready, the system shall provision the configured
-          secrets file and bootstrap inputs into the guest without inheriting
-          host environment variables.
-        ears_type: event-driven
-        verification: >-
-          Set a test environment variable on the host, run the create command,
-          and inspect the guest. Confirm the configured provisioning files are
-          present in the guest and the host test variable is absent from the
-          guest environment.
-
-      - id: DEV-008
-        text: >-
-          If the configured secrets file is missing or unreadable, then the
-          system shall display an error and abort before creating a VM.
-        ears_type: unwanted-behavior
-        verification: >-
-          Point `secrets.env_file` at a missing file and run the create
-          command. Confirm the command fails with an error and no VM is created.
-
-      - id: DEV-009
-        text: >-
-          When `opencode.config_template` and `opencode.config_path` are
-          configured, the system shall create the OpenCode configuration file in
-          the guest at the configured path.
-        ears_type: event-driven
-        verification: >-
-          Provide an OpenCode template and destination path in `devvm.yaml`,
-          run the create command, and confirm the guest contains the rendered
-          configuration file at the configured path.
-
-      - id: DEV-010
-        text: >-
-          When `source.repo` is configured, the system shall clone that
-          repository into `guest.repo_dir` inside the guest.
-        ears_type: event-driven
-        verification: >-
-          Run the create command with a reachable repository URL in
-          `source.repo` and confirm the repository exists inside
-          `guest.repo_dir` in the guest.
-
-      - id: DEV-011
-        text: >-
-          When `source.branch` is configured, the system shall check out that
-          branch in the cloned repository.
-        ears_type: event-driven
-        verification: >-
-          Set `source.branch` to a non-default branch in `devvm.yaml`, run the
-          create command, and confirm the repository inside the guest is on the
-          configured branch.
-
-  - id: US-004
     title: Preserve Secure Runtime Defaults
     narrative:
       as_a: developer
       i_want: the created environment to keep the same secure runtime posture
-      so_that: startup stays simple without weakening the isolation model
+      so_that: the MVP remains simple without weakening the isolation model
     requirements:
-      - id: DEV-012
+      - id: DEV-007
         text: >-
-          The system shall create the guest runtime as the non-root user
-          configured by `guest.user`.
+          The system shall create the guest runtime as the non-root user defined
+          by the checked-in cloud-init file.
         ears_type: ubiquitous
         verification: >-
           After the VM is created, enter it and run `whoami`. Confirm the
-          active user matches `guest.user` and is not `root`.
+          active user matches the configured guest user and is not `root`.
 
-      - id: DEV-013
+      - id: DEV-008
         text: >-
-          When guest setup completes, the system shall ensure the configured
-          guest user cannot execute commands with administrative privileges.
+          When guest setup completes, the system shall ensure the guest user
+          cannot execute commands with administrative privileges.
         ears_type: event-driven
         verification: >-
-          After the VM is created, enter it as the configured guest user and
-          run `sudo -n true`. Confirm the command fails.
+          After the VM is created, enter it as the guest user and run
+          `sudo -n true`. Confirm the command fails.
 
-      - id: DEV-014
+      - id: DEV-009
         text: >-
           The system shall configure the guest firewall to deny inbound and
           outbound traffic by default.
@@ -211,57 +144,19 @@ stories:
           After the VM is created, inspect the guest firewall configuration and
           confirm both inbound and outbound default policies are deny.
 
-      - id: DEV-015
+      - id: DEV-010
         text: >-
           The system shall allow outbound network connections only on the ports
-          listed in `security.allowed_outbound_ports`.
+          defined in the checked-in cloud-init file.
         ears_type: ubiquitous
         verification: >-
-          Configure a known list of allowed outbound ports in `devvm.yaml`, run
-          the create command, and confirm the guest firewall contains allow
-          rules for only those ports.
+          Run the create command and confirm the guest firewall contains allow
+          rules for only the outbound ports declared in the cloud-init file.
 
-      - id: DEV-016
+      - id: DEV-011
         text: >-
-          When `security.disable_ssh` is true, the system shall disable SSH
-          access to the guest.
-        ears_type: event-driven
-        verification: >-
-          Set `security.disable_ssh: true`, run the create command, and confirm
-          the guest SSH service is disabled and the VM is still accessible via
-          `multipass shell`.
-
-  - id: US-005
-    title: Verify OpenCode Supply Chain Integrity
-    narrative:
-      as_a: developer
-      i_want: the OpenCode toolchain verified during environment setup
-      so_that: I can trust the runtime delivered into the guest
-    requirements:
-      - id: DEV-017
-        text: >-
-          The system shall install OpenCode CLI from its official distribution
-          source before the create command reports success.
+          The system shall disable SSH access to the guest.
         ears_type: ubiquitous
         verification: >-
-          Run the create command and confirm `opencode --version` succeeds in
-          the guest before the command reports a ready environment.
-
-      - id: DEV-018
-        text: >-
-          The system shall verify the OpenCode CLI checksum against the
-          configured expected value before installation.
-        ears_type: ubiquitous
-        verification: >-
-          Review the guest setup log after a successful create operation and
-          confirm checksum verification completed before OpenCode installation.
-
-      - id: DEV-019
-        text: >-
-          If OpenCode checksum verification fails, then the system shall abort
-          environment setup and report an error.
-        ears_type: unwanted-behavior
-        verification: >-
-          Configure an invalid expected checksum for OpenCode and run the
-          create command. Confirm the command fails and reports checksum
-          verification failure.
+          Run the create command and confirm the guest SSH service is disabled
+          and the VM is still accessible via `multipass shell`.

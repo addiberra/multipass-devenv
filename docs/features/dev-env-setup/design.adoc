@@ -1,30 +1,25 @@
 = Design: Dev Environment Setup
-:version: 3.0.0
-:source-spec-version: 3.0.0
+:version: 4.0.0
+:source-spec-version: 4.0.0
 :status: Current
-:last-updated: 2026-03-31
+:last-updated: 2026-04-01
 :feature: dev-env-setup
 :toc:
 
 == Technical Context
 
-This feature provisions an isolated development environment for agentic coding
-work by creating a Multipass VM from a project-local `devvm.yaml` file. The
-prior design centered on a flag-driven Bash script that generated cloud-init
-content dynamically. The new design keeps Multipass and static cloud-init as
-the base hardening layer, but moves project-specific setup into a thin Go CLI
-that performs post-boot provisioning with `multipass transfer` and
-`multipass exec`.
+This feature is being reduced to a first MVP. The repository should center on
+three inputs only:
 
-The intent is to keep startup simple without weakening the existing security
-model:
+* a checked-in `devvm.yaml` machine config
+* a checked-in cloud-init file
+* a thin Go `create` command
 
-* Multipass remains the primary isolation boundary.
-* Host directories are never mounted into the guest.
-* SSH remains disabled.
-* The guest runtime remains non-root.
-* UFW still enforces a default-deny network posture with explicit allow rules.
-* Only scoped provisioning files are delivered into the guest during setup.
+The prior design described a larger provisioning workflow with rendered
+cloud-init, secrets handling, repository cloning, and guest bootstrap logic.
+That behavior is intentionally removed from the MVP. The CLI is reduced to
+loading configuration, validating the referenced cloud-init file, invoking
+`multipass launch`, and waiting for cloud-init completion.
 
 == Decisions and Constraints
 
@@ -35,32 +30,23 @@ Relevant constraints from `docs/constraints.yaml`:
 
 * C-001: No host directory mounts
 * C-002: Network egress restricted to essential ports via UFW
-* C-003: Secrets delivered through scoped provisioning files, not host env vars or mounts
 * C-004: SSH disabled
 * C-005: Non-root user execution
-* C-008: No host credential exposure
-* C-010 through C-016: Supply chain integrity controls
+
+No new ADR is needed for this simplification. The MVP keeps the accepted Go CLI
+and Multipass-based architecture, but removes higher-level provisioning scope.
 
 == Research and Unknowns
 
-Research during this transition found that the remaining complexity was mostly
-in host-side orchestration, not in Multipass itself. The design therefore uses
-Multipass-native primitives directly:
+The existing repository already has the required technical foundation:
 
-* `multipass launch` for fresh instances
-* `multipass clone` for optional base-instance reuse
-* `multipass transfer` for scoped file delivery
-* `multipass exec` for post-boot provisioning
+* a Go CLI entrypoint in `cmd/devvm`
+* internal packages for config loading and Multipass execution
+* a checked-in cloud-init file that already carries the guest hardening logic
 
-The CLI is intentionally narrow:
+The simplification mainly removes excess configuration and orchestration.
 
-* one user-facing command: `create`
-* one project config file: `devvm.yaml`
-* no general configuration-management behavior
-
-No unresolved research unknowns remain for implementation. The main open point
-for future evolution is whether a reusable base instance should be built and
-managed by the same tool or kept as a manual operational step.
+No unresolved unknowns remain for this MVP design.
 
 == System Design
 
@@ -71,46 +57,26 @@ managed by the same tool or kept as a manual operational step.
 flowchart LR
     subgraph Host["Host Machine"]
         CFG[devvm.yaml]
-        CLI[create CLI]
-        SEC[secrets.env]
-        BOOT[bootstrap-guest.sh]
-        TPL[OpenCode config template]
+        CLI[devvm create]
+        CI[cloud-init file]
     end
 
     subgraph MP["Multipass"]
         LAUNCH[multipass launch]
-        CLONE[multipass clone]
-        XFER[multipass transfer]
-        EXEC[multipass exec]
-        SHELL[multipass shell]
+        STATUS[multipass exec cloud-init status --wait]
     end
 
     subgraph VM["Guest VM"]
-        CI[static cloud-init]
-        UFW[UFW rules]
-        USER[guest user]
-        REPO[repo checkout]
-        OC[OpenCode config]
-        BC[bootstrap execution]
+        GUEST[Ubuntu VM]
+        BOOT[cloud-init boot setup]
     end
 
     CFG --> CLI
-    SEC --> CLI
-    BOOT --> CLI
-    TPL --> CLI
+    CI --> CLI
     CLI --> LAUNCH
-    CLI --> CLONE
-    LAUNCH --> CI
-    CLONE --> CI
-    CLI --> XFER
-    CLI --> EXEC
-    CI --> UFW
-    CI --> USER
-    XFER --> OC
-    XFER --> BC
-    EXEC --> REPO
-    EXEC --> BC
-    SHELL --> USER
+    LAUNCH --> GUEST
+    GUEST --> BOOT
+    CLI --> STATUS
 ----
 
 === Create Flow
@@ -119,26 +85,17 @@ flowchart LR
 ----
 sequenceDiagram
     actor User
-    participant CLI as create CLI
+    participant CLI as devvm create
     participant MP as Multipass
     participant VM as Guest VM
 
     User->>CLI: create
-    CLI->>CLI: Read devvm.yaml
-    CLI->>CLI: Validate schema and paths
-    CLI->>CLI: Resolve launch source
-
-    alt base instance available
-        CLI->>MP: multipass clone <base>
-    else launch fresh VM
-        CLI->>MP: multipass launch --cloud-init base.yaml
-    end
-
+    CLI->>CLI: Load devvm.yaml
+    CLI->>CLI: Validate instance values and cloud-init path
+    CLI->>MP: multipass launch --cloud-init <file>
     MP->>VM: Start guest
-    VM->>VM: Apply static cloud-init hardening
-    CLI->>MP: multipass transfer scoped files
-    CLI->>MP: multipass exec bootstrap steps
-    MP->>VM: Clone repo and configure guest
+    VM->>VM: Apply checked-in cloud-init
+    CLI->>MP: multipass exec cloud-init status --wait
     CLI-->>User: Ready message with VM name
 ----
 
@@ -146,180 +103,108 @@ sequenceDiagram
 
 ==== `devvm.yaml`
 
-`devvm.yaml` is the only required project input. It defines:
+`devvm.yaml` is the only required project configuration file. For the MVP it
+defines only the values needed to launch a VM:
 
-* instance sizing and optional naming
-* repository source and optional branch
-* optional base-instance preference
-* guest paths and user
-* provisioning file locations
-* security settings such as SSH disablement and allowed outbound ports
-* optional OpenCode config template location
+* instance name, or omission to trigger name derivation
+* CPU, memory, disk, and Ubuntu release
+* path to the checked-in cloud-init file
 
-The CLI resolves relative paths from the config file directory so a project can
-remain self-contained.
+Relative paths are resolved from the config file directory.
 
 ==== Create CLI
 
-The Go CLI is a thin orchestrator, not a provisioning framework. Internally it
-is split into these responsibilities:
+The Go CLI stays intentionally thin. It is responsible for:
 
-* `config`: load and validate `devvm.yaml`
-* `source resolution`: decide clone vs fresh launch
-* `multipass`: run `launch`, `clone`, `transfer`, and `exec`
-* `provisioning`: stage the exact files required for guest setup
-* `verification`: confirm the environment is ready before success is reported
+* loading and validating `devvm.yaml`
+* resolving the cloud-init path
+* deriving a fallback instance name from the working directory
+* calling `multipass launch` with the configured machine values
+* waiting for `cloud-init status --wait`
+* reporting success or failure
 
-The command surface stays intentionally small. The only user-facing operation is
-`create`.
+The command surface remains one operation: `create`.
 
-==== Provisioning Inputs
+==== Multipass Adapter
 
-The CLI reads three classes of host-side inputs:
+The Multipass wrapper exposes only the operations required by the MVP:
 
-* `secrets.env` for runtime secrets and git identity
-* static guest bootstrap script for per-project setup
-* optional OpenCode config template for rendered guest config
+* launch a fresh VM with sizing, release, and cloud-init path
+* wait for cloud-init completion inside the launched VM
 
-These files are validated before any VM creation begins when possible.
+It does not implement file transfer, post-boot execution, or clone workflows.
 
 === Guest Components
 
-==== Static cloud-init
+==== Checked-In Cloud-Init
 
-`cloud-init/base.yaml` remains static and is responsible only for base guest
-hardening and readiness:
+The checked-in cloud-init file becomes the full guest provisioning contract for
+the MVP. It is responsible for the secure runtime defaults required by the spec:
 
-* install packages from official Ubuntu repositories
-* create the non-root guest user
-* prepare guest directories
-* configure and enable UFW with default-deny rules and allowed outbound ports
-* disable SSH access
+* creating the non-root guest user
+* denying sudo access for that user
+* disabling SSH access
+* configuring UFW with default deny policies and explicit outbound allow rules
 
-Project-specific repository and secret material is no longer embedded into
-generated cloud-init content.
-
-==== Guest provisioning flow
-
-After the guest is ready, the CLI uses `multipass transfer` to copy only the
-files required for the session into the guest. A subsequent `multipass exec`
-invocation performs setup tasks such as:
-
-* render and place OpenCode config
-* write git config
-* seed known hosts if needed
-* clone the configured repository into `guest.repo_dir`
-* check out the configured branch if present
-* install or verify OpenCode in the guest
-* revoke any temporary administrative privileges from the runtime user
-
-This two-phase approach keeps base VM creation stable while allowing project
-setup to vary by config.
-
-=== Config Schema
-
-The config contract is represented by `devvm.yaml` and validated against a
-schema. The top-level sections are:
-
-* `instance`
-* `source`
-* `base`
-* `guest`
-* `provisioning`
-* `secrets`
-* `security`
-* `opencode`
-
-Validation handled by the CLI includes:
-
-* schema conformance
-* required file existence for referenced host paths
-* valid Multipass-compatible instance names
-* positive resource sizing values
-* `guest.repo_dir` contained within `guest.workspace_dir`
-* `base.instance_name` present when `base.enabled` is true
+The CLI treats this file as an opaque launch input. The CLI validates that the
+path exists and passes it to Multipass unchanged.
 
 === Failure Handling
 
-The CLI stops on the first failed precondition that would otherwise create an
-invalid or half-configured environment.
+The create flow stops on the first failure that would otherwise create an
+invalid or misleading environment.
 
 Failure classes:
 
-* config missing or invalid before VM creation
-* required host file missing before VM creation
-* base instance unavailable, causing logged fallback to fresh launch
-* file transfer failure after VM creation
-* bootstrap or repository clone failure after VM creation
-* checksum validation failure for OpenCode installation
+* missing or unreadable `devvm.yaml`
+* invalid config values
+* missing or unreadable cloud-init file
+* Multipass launch failure
+* cloud-init completion failure
 
-Post-creation failures are surfaced directly with the VM name so the developer
-can inspect or remove the instance manually.
+Post-launch failures are surfaced with the instance name so the developer can
+inspect or delete the VM manually.
 
 == Requirement Resolution
 
 === US-001: Create Environment from Project Config
 
-Components:: `devvm.yaml`, create CLI config loader, Multipass adapter
+Components:: `devvm.yaml`, `internal/config`, `internal/create`, `internal/multipass`
 Requirements::
-* DEV-001: The create CLI reads `devvm.yaml` and uses its values to drive VM creation.
-* DEV-002: Preflight validation rejects missing or unreadable config before invoking Multipass.
-* DEV-003: Schema validation reports the invalid field and aborts before VM creation.
-* DEV-004: The source-resolution step derives a valid instance name from the repository when `instance.name` is absent.
+* DEV-001: The CLI reads machine settings from `devvm.yaml` and passes them to Multipass launch.
+* DEV-002: Config loading fails fast when `devvm.yaml` is missing or unreadable.
+* DEV-003: Validation rejects invalid config fields before launch.
+* DEV-004: The config loader derives a valid fallback instance name from the working directory.
 
-=== US-002: Choose the Startup Source Automatically
+=== US-002: Launch with a Checked-In Cloud-Init File
 
-Components:: source resolution logic, Multipass adapter
+Components:: `devvm.yaml`, `internal/config`, `internal/create`, `internal/multipass`
 Requirements::
-* DEV-005: The source resolver selects `multipass clone` when a configured base instance is available.
-* DEV-006: The source resolver falls back to `multipass launch` with the configured Ubuntu release and reports that fallback.
+* DEV-005: The create flow launches a fresh VM from the configured Ubuntu release and cloud-init file.
+* DEV-006: Missing cloud-init input or launch failure is reported as a create failure.
 
-=== US-003: Provision the Guest with Scoped Inputs
+=== US-003: Preserve Secure Runtime Defaults
 
-Components:: provisioning input loader, transfer stage, bootstrap execution, repository setup
+Components:: checked-in cloud-init file, `internal/create`, `internal/multipass`
 Requirements::
-* DEV-007: Provisioning delivers only configured files into the guest and does not inherit host environment variables.
-* DEV-008: Preflight validation rejects missing or unreadable secrets input before VM creation.
-* DEV-009: The template-rendering and transfer path creates the OpenCode config file at the configured guest destination.
-* DEV-010: The bootstrap execution stage clones the configured repository into `guest.repo_dir`.
-* DEV-011: The bootstrap execution stage checks out the configured branch when one is provided.
-
-=== US-004: Preserve Secure Runtime Defaults
-
-Components:: static cloud-init, bootstrap execution, guest verification
-Requirements::
-* DEV-012: Static cloud-init and guest verification ensure the runtime user matches `guest.user` and is non-root.
-* DEV-013: The final bootstrap hardening step leaves the runtime user without administrative privileges.
-* DEV-014: Static cloud-init configures firewall defaults to deny inbound and outbound traffic.
-* DEV-015: Firewall provisioning applies allow rules only for ports listed in `security.allowed_outbound_ports`.
-* DEV-016: Static cloud-init disables SSH while preserving `multipass shell` access.
-
-=== US-005: Verify OpenCode Supply Chain Integrity
-
-Components:: bootstrap execution, OpenCode installer, guest verification
-Requirements::
-* DEV-017: OpenCode installation completes before the CLI reports success.
-* DEV-018: The installer verifies the expected checksum before install.
-* DEV-019: A checksum mismatch aborts setup and reports a failure.
+* DEV-007: The checked-in cloud-init file creates a non-root guest runtime.
+* DEV-008: The checked-in cloud-init file leaves the guest user without administrative privileges.
+* DEV-009: The checked-in cloud-init file sets deny-by-default firewall policies.
+* DEV-010: The checked-in cloud-init file defines the allowed outbound ports.
+* DEV-011: The checked-in cloud-init file disables SSH access while allowing `multipass shell` usage.
 
 == File Structure
 
 [source]
 ----
 multipass-devenv/
-├── cloud-init/
-│   └── base.yaml
 ├── cmd/
 │   └── devvm/
 │       └── main.go
 ├── internal/
 │   ├── config/
-│   ├── multipass/
-│   ├── provisioning/
-│   └── create/
-├── scripts/
-│   └── bootstrap-guest.sh
-├── templates/
-│   └── opencode-config.yaml.j2
+│   ├── create/
+│   └── multipass/
+├── opencode-sandbox.yaml
 └── devvm.yaml
 ----

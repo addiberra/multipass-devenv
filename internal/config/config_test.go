@@ -1,95 +1,45 @@
 package config
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
-func TestValidateOpenCodeDownloadURL(t *testing.T) {
-	tests := []struct {
-		name    string
-		url     string
-		wantErr bool
-	}{
-		{
-			name:    "official github release",
-			url:     "https://github.com/anomalyco/opencode/releases/download/v1.2.3/opencode-linux-amd64",
-			wantErr: false,
-		},
-		{
-			name:    "wrong host",
-			url:     "https://example.com/anomalyco/opencode/releases/download/v1.2.3/opencode-linux-amd64",
-			wantErr: true,
-		},
-		{
-			name:    "wrong path",
-			url:     "https://github.com/anomalyco/opencode/archive/v1.2.3.tar.gz",
-			wantErr: true,
-		},
-		{
-			name:    "query string not allowed",
-			url:     "https://github.com/anomalyco/opencode/releases/download/v1.2.3/opencode-linux-amd64?download=1",
-			wantErr: true,
-		},
+func TestLoadResolvesCloudInitAndDerivesName(t *testing.T) {
+	tempDir := t.TempDir()
+	cloudInitPath := filepath.Join(tempDir, "opencode-sandbox.yaml")
+	if err := os.WriteFile(cloudInitPath, []byte("#cloud-config\n"), 0o600); err != nil {
+		t.Fatalf("write cloud-init: %v", err)
+	}
+	configPath := filepath.Join(tempDir, "devvm.yaml")
+	configYAML := []byte("schema_version: \"1.0\"\ncloud_init: \"./opencode-sandbox.yaml\"\ninstance:\n  ubuntu_release: \"24.04\"\n  cpus: 2\n  memory: \"4G\"\n  disk: \"30G\"\n")
+	if err := os.WriteFile(configPath, configYAML, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := validateOpenCodeDownloadURL(tt.url)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("validateOpenCodeDownloadURL(%q) error = %v, wantErr %v", tt.url, err, tt.wantErr)
-			}
-		})
+	cfg, err := Load(configPath)
+	if err != nil {
+		t.Fatalf("Load() error = %v", err)
+	}
+
+	if cfg.CloudInit != cloudInitPath {
+		t.Fatalf("CloudInit = %q, want %q", cfg.CloudInit, cloudInitPath)
+	}
+	if cfg.Instance.Name != filepath.Base(tempDir)+"-devvm" {
+		t.Fatalf("Instance.Name = %q, want %q", cfg.Instance.Name, filepath.Base(tempDir)+"-devvm")
 	}
 }
 
-func TestParseSourceRepo(t *testing.T) {
-	tests := []struct {
-		name     string
-		repo     string
-		wantHost string
-		wantSSH  bool
-		wantErr  bool
-	}{
-		{
-			name:     "https github repo",
-			repo:     "https://github.com/addiberra/multipass-devenv.git",
-			wantHost: "github.com",
-			wantSSH:  false,
-		},
-		{
-			name:     "scp style github ssh repo",
-			repo:     "git@github.com:addiberra/multipass-devenv.git",
-			wantHost: "github.com",
-			wantSSH:  true,
-		},
-		{
-			name:     "ssh url gitlab repo",
-			repo:     "ssh://git@gitlab.com/group/project.git",
-			wantHost: "gitlab.com",
-			wantSSH:  true,
-		},
-		{
-			name:    "unsupported ssh host",
-			repo:    "git@example.com:org/repo.git",
-			wantErr: true,
-		},
-		{
-			name:    "wrong ssh user",
-			repo:    "ssh://ubuntu@github.com/org/repo.git",
-			wantErr: true,
-		},
+func TestLoadRejectsInvalidConfig(t *testing.T) {
+	tempDir := t.TempDir()
+	configPath := filepath.Join(tempDir, "devvm.yaml")
+	configYAML := []byte("schema_version: \"1.0\"\ncloud_init: \"./missing.yaml\"\ninstance:\n  ubuntu_release: \"latest\"\n  cpus: 0\n  memory: \"4G\"\n  disk: \"30G\"\n")
+	if err := os.WriteFile(configPath, configYAML, 0o600); err != nil {
+		t.Fatalf("write config: %v", err)
 	}
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			repo, err := ParseSourceRepo(tt.repo)
-			if (err != nil) != tt.wantErr {
-				t.Fatalf("ParseSourceRepo(%q) error = %v, wantErr %v", tt.repo, err, tt.wantErr)
-			}
-			if tt.wantErr {
-				return
-			}
-			if repo.Host != tt.wantHost || repo.UsesSSH != tt.wantSSH {
-				t.Fatalf("ParseSourceRepo(%q) = %+v, want host=%q ssh=%v", tt.repo, repo, tt.wantHost, tt.wantSSH)
-			}
-		})
+	if _, err := Load(configPath); err == nil {
+		t.Fatal("Load() error = nil, want validation error")
 	}
 }

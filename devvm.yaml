@@ -1,43 +1,11 @@
 # yaml-language-server: $schema=./schemas/devvm.schema.json
 
 schema_version: "1.0"
+cloud_init: "./opencode-sandbox.yaml"
 
 instance:
-  name: "my-project-dev2"
+  name: "my-project-devvm"
   ubuntu_release: "24.04"
   cpus: 2
   memory: "4G"
   disk: "30G"
-
-source:
-  repo: "https://github.com/provenimpact/proven-needs.git"
-  branch: "main"
-
-base:
-  enabled: true
-  instance_name: "opencode-base"
-
-guest:
-  user: "opencode"
-  workspace_dir: "/home/opencode/workspace"
-  repo_dir: "/home/opencode/workspace/repo"
-
-provisioning:
-  cloud_init: "./cloud-init/base.yaml"
-  bootstrap_script: "./scripts/bootstrap-guest.sh"
-
-secrets:
-  env_file: "./secrets.env"
-
-security:
-  disable_ssh: true
-  mount_workspace: false
-  allowed_outbound_ports:
-    - 53
-    - 443
-
-opencode:
-  config_template: "./templates/opencode-config.yaml.j2"
-  config_path: "/home/opencode/.config/opencode/config.yaml"
-  download_url: "https://github.com/anomalyco/opencode/releases/download/v1.3.10/opencode-linux-x64.tar.gz"
-  sha256: "ba53196de632142a86b1df77a0777fae313620ac8fe54d11c83c310d4aeeca74"

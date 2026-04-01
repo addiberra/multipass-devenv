@@ -1,5 +1,19 @@
 = State Transition Log
-:last-updated: 2026-03-31
+:last-updated: 2026-04-01
+
+== TRANSITION-006
+:date: 2026-04-01
+:intent: Simplify the repository to an MVP with one cloud-init file, one machine config file, and one create CLI
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (simplified)
+:desired-state: The repository centers on a static cloud-init file, a minimal `devvm.yaml` machine config, and a thin Go `create` command that launches a Multipass VM from those inputs
+:prior-state: The repository includes broader provisioning, secrets, repo bootstrap, and documentation for a larger setup workflow than the MVP requires
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v4.0.0), docs/features/dev-env-setup/design.adoc (v4.0.0), docs/features/dev-env-setup/tasks.yaml (v5.0.0), docs/architecture.adoc (v4.0.0), docs/state-log.adoc, devvm.yaml, schemas/devvm.schema.json, README.md, cmd/devvm/main.go, internal/config/config.go, internal/config/config_test.go, internal/create/create.go, internal/multipass/multipass.go, opencode-sandbox.yaml, internal/provisioning/provisioning.go (deleted), internal/provisioning/known_hosts (deleted), cloud-init/base.yaml (deleted), templates/opencode-config.yaml.j2 (deleted), secrets.env.example (deleted), opencode-checksum.sh (deleted)
 
 == TRANSITION-005
 :date: 2026-03-31
@@ -12,7 +26,7 @@
 :capabilities-planned: needs-adr, needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
 :capabilities-invoked:
 :constraints-checked:
-:result: In Progress
+:result: Failed
 :artifacts-modified:
 
 == TRANSITION-004

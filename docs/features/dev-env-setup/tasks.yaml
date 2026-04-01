@@ -2,90 +2,62 @@
 
 schema_version: "3.0.0"
 feature: dev-env-setup
-version: "4.0.0"
-status: Current
-source_design_version: "3.0.0"
-source_spec_version: "3.0.0"
-last_updated: "2026-03-31"
+version: "5.0.0"
+status: Implemented
+source_design_version: "4.0.0"
+source_spec_version: "4.0.0"
+last_updated: "2026-04-01"
 
 overview: >-
-  Replace the Bash launch flow with a thin Go `create` CLI driven by
-  `devvm.yaml`. Six tasks: add the config schema and loader, add Multipass
-  orchestration, add guest provisioning assets, wire the create command,
-  retire the old Bash-first workflow in docs/assets, and validate the new
-  behavior. TASK-001, TASK-002, and TASK-003 are root tasks. TASK-004 depends
-  on the first three, TASK-005 depends on TASK-004, and TASK-006 depends on
-  TASK-004 and TASK-005.
+  Simplify the repository to an MVP with one checked-in cloud-init file, one
+  minimal `devvm.yaml` machine config, and one thin Go `create` command. The
+  work is organized into config simplification, launch-path simplification,
+  repository cleanup, and final validation.
 
 tasks:
   - id: TASK-001
-    title: Add devvm config schema and loader
+    title: Simplify the machine config contract
     depends_on: []
-    components: [devvm.yaml, internal/config, cmd/devvm]
+    components: [devvm.yaml, schemas/devvm.schema.json, internal/config]
     stories: [US-001]
     requirements: [DEV-001, DEV-002, DEV-003, DEV-004]
+    done: true
     description: >-
-      Add the `devvm.yaml` config contract, JSON schema, and Go config loading
-      and validation code. Resolve relative paths from the config location,
-      validate required fields and value formats, and support auto-generated VM
-      names when `instance.name` is absent.
+      Reduce `devvm.yaml` and the Go config loader to the MVP machine fields
+      only. Validate instance sizing, release, and cloud-init path, and derive
+      a fallback instance name from the working directory when needed.
 
   - id: TASK-002
-    title: Add Multipass source resolution and command runner
-    depends_on: []
-    components: [internal/multipass, internal/create]
-    stories: [US-002, US-004]
-    requirements: [DEV-005, DEV-006, DEV-014, DEV-015, DEV-016]
+    title: Simplify the Multipass create flow
+    depends_on: [TASK-001]
+    components: [cmd/devvm, internal/create, internal/multipass]
+    stories: [US-001, US-002]
+    requirements: [DEV-001, DEV-005, DEV-006]
+    done: true
     description: >-
-      Implement Go helpers for `multipass launch`, `multipass clone`,
-      `multipass transfer`, `multipass exec`, and source selection. Support
-      fallback from base clone to fresh launch, pass the configured Ubuntu
-      release and resource sizing, and keep static cloud-init as the hardening
-      entrypoint for firewall and SSH controls.
+      Reduce the CLI and Multipass wrapper to a single launch path that uses
+      the configured cloud-init file and waits for cloud-init completion before
+      reporting success.
 
   - id: TASK-003
-    title: Add guest provisioning assets and bootstrap flow
-    depends_on: []
-    components: [cloud-init/base.yaml, scripts/bootstrap-guest.sh, templates/opencode-config.yaml.j2, internal/provisioning]
-    stories: [US-003, US-004, US-005]
-    requirements: [DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-017, DEV-018, DEV-019]
+    title: Align the checked-in cloud-init and repository layout to the MVP
+    depends_on: [TASK-002]
+    components: [opencode-sandbox.yaml, README.md]
+    stories: [US-002, US-003]
+    requirements: [DEV-005, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011]
+    done: true
     description: >-
-      Refactor provisioning assets so base cloud-init only handles static guest
-      hardening and package setup, while a new bootstrap script handles repo
-      clone, optional branch checkout, OpenCode config placement, checksum
-      verification, and final privilege hardening after transfer.
+      Keep one checked-in cloud-init file as the guest provisioning contract,
+      remove obsolete provisioning helpers and extra templates, and update the
+      repository documentation and structure to match the MVP.
 
   - id: TASK-004
-    title: Wire the Go create command end to end
-    depends_on: [TASK-001, TASK-002, TASK-003]
-    components: [cmd/devvm, internal/create, internal/config, internal/multipass, internal/provisioning]
-    stories: [US-001, US-002, US-003, US-004, US-005]
-    requirements: [DEV-001, DEV-005, DEV-007, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-017, DEV-018, DEV-019]
+    title: Validate the MVP launch workflow
+    depends_on: [TASK-003]
+    components: [cmd/devvm, internal/config, internal/create, internal/multipass, docs/features/dev-env-setup]
+    stories: [US-001, US-002, US-003]
+    requirements: [DEV-002, DEV-003, DEV-004, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011]
+    done: true
     description: >-
-      Implement the `create` command orchestration: load config, validate host
-      inputs, choose clone vs launch, wait for guest readiness, transfer scoped
-      files, run bootstrap, surface errors, and report success with the created
-      VM name.
-
-  - id: TASK-005
-    title: Retire the Bash-first startup path
-    depends_on: [TASK-004]
-    components: [scripts/launch.sh, README.md, secrets.env.example]
-    stories: [US-001, US-003]
-    requirements: [DEV-001, DEV-007, DEV-008]
-    description: >-
-      Remove or reduce the old `scripts/launch.sh` entrypoint so the repository
-      is centered on the Go `create` command and `devvm.yaml`. Update example
-      files and remove stale Bash-first assumptions that conflict with the new
-      workflow.
-
-  - id: TASK-006
-    title: Validate the create workflow and documentation
-    depends_on: [TASK-004, TASK-005]
-    components: [README.md, docs/features/dev-env-setup, docs/architecture.adoc]
-    stories: [US-001, US-002, US-003, US-004, US-005]
-    requirements: [DEV-001, DEV-003, DEV-006, DEV-008, DEV-015, DEV-016, DEV-019]
-    description: >-
-      Run artifact validators and code-level verification for the new CLI,
-      update user-facing documentation to describe `devvm.yaml` and `create`,
-      and ensure the documented verification steps match the implemented flow.
+      Run task and spec validators plus code-level verification for the reduced
+      CLI. Confirm the documented workflow matches the implemented MVP behavior.

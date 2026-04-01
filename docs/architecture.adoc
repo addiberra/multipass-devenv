@@ -1,6 +1,6 @@
 = System Architecture
-:version: 3.0.0
-:last-updated: 2026-03-31
+:version: 4.0.0
+:last-updated: 2026-04-01
 :toc:
 
 == Feature Design Sources
@@ -9,35 +9,32 @@
 |===
 | Feature | Design Version
 
-| dev-env-setup | 3.0.0
+| dev-env-setup | 4.0.0
 |===
 
 == Overview
 
-This project provisions isolated Ubuntu VMs with Multipass for agentic
-development work. The architecture keeps the VM boundary as the primary
-security control, but replaces the old Bash launch workflow with a thin Go
-`create` CLI that reads `devvm.yaml`, launches or clones a VM, transfers
-scoped provisioning files into the guest, and runs post-boot setup through
-Multipass-native commands.
+This project is a minimal Go CLI for launching an isolated Ubuntu VM with
+Multipass from two checked-in inputs: `devvm.yaml` and `opencode-sandbox.yaml`.
+The VM boundary remains the primary security control. The host-side tool does
+not render extra provisioning data, transfer files after boot, or manage
+repository cloning. It validates the machine config, launches the VM, and waits
+for cloud-init to finish.
 
 == System Context
 
 [source,mermaid]
 ----
 C4Context
-  title System Context - Multipass Dev Environment
+  title System Context - Multipass Dev Environment MVP
 
-  Person(developer, "Developer", "Runs agentic tooling inside an isolated VM")
-  System_Ext(gitproviders, "Git Providers", "GitHub, GitLab - repositories")
-  System_Ext(llmapis, "LLM APIs", "OpenAI, OpenCode - model access")
-  System_Ext(registries, "Package Registries", "Package and binary sources")
-  System(devvm, "Multipass Dev Environment", "Config-driven VM startup for secure development work")
+  Person(developer, "Developer", "Launches and enters an isolated development VM")
+  System_Ext(multipass, "Multipass", "Creates and manages local Ubuntu VMs")
+  System(devvm, "Multipass Dev Environment", "Thin config-driven VM launcher")
 
-  Rel(developer, devvm, "Creates and enters", "devvm create / multipass shell")
-  Rel(devvm, gitproviders, "Clone and fetch", "SSH/HTTPS")
-  Rel(devvm, llmapis, "Model requests", "HTTPS")
-  Rel(devvm, registries, "Install dependencies and binaries", "HTTPS")
+  Rel(developer, devvm, "Runs", "devvm create")
+  Rel(devvm, multipass, "Invokes", "launch / exec")
+  Rel(developer, multipass, "Enters VM", "multipass shell")
 ----
 
 == Container View
@@ -45,43 +42,32 @@ C4Context
 [source,mermaid]
 ----
 C4Container
-  title Container Diagram - Multipass Dev Environment
+  title Container Diagram - Multipass Dev Environment MVP
 
   Person(developer, "Developer", "Host machine user")
+  System_Ext(multipass, "Multipass", "Local VM manager")
 
   System_Boundary(host, "Host Machine") {
-    Container(cli, "devvm create", "Go", "Validates config and orchestrates Multipass startup")
-    Container(config, "devvm.yaml", "File", "Project-local startup configuration")
-    Container(secrets, "secrets.env", "File", "Developer-provided runtime secrets")
+    Container(cli, "devvm create", "Go", "Validates config and launches the VM")
+    Container(config, "devvm.yaml", "File", "Project-local machine configuration")
+    Container(cloudinit, "opencode-sandbox.yaml", "File", "Checked-in guest provisioning file")
   }
 
   System_Boundary(vm, "Multipass VM") {
-    Container(ubuntu, "Ubuntu 24.04", "OS", "Fresh or cloned guest image")
-    Container(cloudinit, "cloud-init", "Provisioning", "Static base guest hardening")
-    Container(bootstrap, "bootstrap-guest.sh", "Shell", "Post-boot guest setup")
-    Container(opencode_user, "opencode user", "User", "Non-root execution context")
-    Container(opencode_cli, "OpenCode CLI", "Binary", "AI coding agent")
-    Container(workspace, "/home/opencode/workspace", "Directory", "Repository and generated work")
-    Container(ufw, "UFW rules", "Firewall", "Default-deny network policy with explicit outbound allows")
+    Container(ubuntu, "Ubuntu 24.04", "VM", "Fresh guest instance")
+    Container(ci, "cloud-init", "Provisioning", "Applies guest setup on first boot")
+    Container(user, "agent user", "Unix user", "Non-root runtime identity")
+    Container(ufw, "UFW rules", "Firewall", "Default-deny inbound and outbound policy")
   }
-
-  System_Ext(gitproviders, "Git Providers", "GitHub, GitLab")
-  System_Ext(llmapis, "LLM APIs", "OpenAI, OpenCode")
-  System_Ext(registries, "Package Registries", "Release and package sources")
 
   Rel(developer, cli, "Runs")
   Rel(cli, config, "Reads")
-  Rel(cli, secrets, "Reads")
-  Rel(cli, ubuntu, "Launches or clones via Multipass")
-  Rel(cli, bootstrap, "Transfers and executes")
-  Rel(cloudinit, opencode_user, "Creates")
-  Rel(bootstrap, ufw, "Configures")
-  Rel(bootstrap, opencode_cli, "Installs")
-  Rel(bootstrap, workspace, "Clones repo into")
-  Rel(opencode_user, opencode_cli, "Runs")
-  Rel(opencode_cli, llmapis, "API calls", "HTTPS")
-  Rel(opencode_cli, gitproviders, "Clone/fetch", "SSH/HTTPS")
-  Rel(opencode_cli, registries, "Downloads", "HTTPS")
+  Rel(cli, cloudinit, "Resolves path to")
+  Rel(cli, multipass, "Launches VM through")
+  Rel(multipass, ubuntu, "Creates")
+  Rel(ubuntu, ci, "Executes")
+  Rel(ci, user, "Creates and hardens")
+  Rel(ci, ufw, "Configures")
 ----
 
 == Component View
@@ -89,32 +75,23 @@ C4Container
 [source,mermaid]
 ----
 C4Component
-  title Component Diagram - Host Create Flow
+  title Component Diagram - Host Create Flow MVP
 
   Container_Boundary(host, "Host Tooling") {
     Component(cmd, "cmd/devvm", "Go", "CLI entrypoint")
-    Component(cfg, "internal/config", "Go", "Config parsing and validation")
-    Component(mp, "internal/multipass", "Go", "Multipass subprocess wrapper")
-    Component(prov, "internal/provisioning", "Go", "Stages scoped guest inputs")
+    Component(cfg, "internal/config", "Go", "Config parsing, path resolution, and validation")
     Component(flow, "internal/create", "Go", "Coordinates create flow")
+    Component(mp, "internal/multipass", "Go", "Multipass subprocess wrapper")
   }
 
   Container_Boundary(vm, "Guest") {
-    Component(ci, "cloud-init", "Provisioning", "Static guest hardening")
-    Component(bs, "bootstrap-guest.sh", "Shell", "Guest setup orchestration")
-    Component(user, "opencode user", "Unix user", "Runtime identity")
-    Component(ufw, "UFW", "Firewall", "Outbound controls")
+    Component(ci, "cloud-init", "Provisioning", "Applies checked-in guest setup")
   }
 
   Rel(cmd, flow, "Invokes")
   Rel(flow, cfg, "Loads config from")
-  Rel(flow, prov, "Stages files through")
   Rel(flow, mp, "Runs Multipass commands through")
-  Rel(mp, ci, "Launches guest with")
-  Rel(mp, bs, "Transfers and executes")
-  Rel(ci, user, "Creates")
-  Rel(bs, ufw, "Configures")
-  Rel(bs, user, "Hardens")
+  Rel(mp, ci, "Waits for completion of")
 ----
 
 == Deployment View
@@ -122,7 +99,7 @@ C4Component
 [source,mermaid]
 ----
 C4Deployment
-  title Deployment Diagram - Multipass Dev Environment
+  title Deployment Diagram - Multipass Dev Environment MVP
 
   Deployment_Node(host_os, "Host OS", "macOS/Linux/Windows") {
     Deployment_Node(devvm_cli, "devvm CLI", "Go")
@@ -133,14 +110,7 @@ C4Deployment
     }
   }
 
-  Deployment_Node(github, "github.com", "Internet")
-  Deployment_Node(openai_api, "api.openai.com", "Internet")
-  Deployment_Node(registries, "Package registries", "Internet")
-
-  Rel(devvm_cli, multipassd, "launch / clone / transfer / exec")
-  Rel(ubuntu, github, "22/443", "UFW allowed when configured")
-  Rel(ubuntu, openai_api, "443", "UFW allowed when configured")
-  Rel(ubuntu, registries, "443", "UFW allowed when configured")
+  Rel(devvm_cli, multipassd, "launch / exec(status)")
 ----
 
 == Technology Stack
@@ -151,59 +121,45 @@ C4Deployment
 
 | Virtualization
 | Multipass
-| ADR-0001 and ADR-0002 retain a VM boundary for agentic workloads
+| Retains the VM boundary for isolated local development workloads
 
 | Host Orchestration
 | Go CLI
-| Thin, testable startup orchestration around Multipass-native commands
+| Keeps the launch workflow small, explicit, and testable
 
 | Base Image
 | Ubuntu 24.04 LTS
-| Stable cloud-init support and current security patches
+| Stable cloud-init support and current security updates
 
-| Base Provisioning
+| Guest Provisioning
 | cloud-init
-| Static guest hardening at VM creation time
-
-| Post-Boot Provisioning
-| Multipass transfer and exec
-| Scoped guest setup without dynamic cloud-init generation
+| Uses one checked-in provisioning file applied during first boot
 
 | Network Firewall
 | UFW
-| Simple default-deny outbound controls with explicit allow rules
-
-| Agent
-| OpenCode CLI
-| Installed from official releases with checksum verification
+| Enforces deny-by-default networking inside the guest
 |===
 
 == Security Architecture
 
 === Isolation Boundary
 
-The security model depends on the Multipass VM boundary, not on in-guest MAC
-policies or host directory mounts. Repositories live inside the guest
-workspace, and host credential directories are not mounted into the VM.
+The primary security boundary is the Multipass VM. The host CLI does not mount
+host directories into the guest.
 
 === Provisioning Boundary
 
-Secrets and setup inputs are delivered as scoped files copied into the guest
-during startup. The host environment is not inherited into the VM. Only the
-files required for the current session are staged and transferred.
+Provisioning is entirely defined by the checked-in `opencode-sandbox.yaml`
+cloud-init file. The host-side CLI does not inject secrets or perform post-boot
+file transfer.
 
 === Access Model
 
-The VM is entered through `multipass shell`. SSH is disabled. The `opencode`
-user is the runtime identity for agent tooling, and bootstrap removes sudo
-access before the environment is handed to the developer.
+The VM is accessed through `multipass shell`. SSH is disabled in the guest. The
+runtime user inside the VM is non-root and is not granted sudo access.
 
 === Network Egress Controls
 
-UFW enforces default-deny inbound and outbound policies. Outbound access is
-limited to the ports configured in `devvm.yaml`, typically:
-
-* 443/tcp for HTTPS APIs and package downloads
-* 53 for DNS resolution
-
-Port 22/tcp can be added when SSH-based git access is required.
+UFW is configured inside the guest by cloud-init with default-deny inbound and
+outbound policies, plus explicit outbound allows defined in the checked-in
+cloud-init file.
