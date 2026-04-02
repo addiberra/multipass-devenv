@@ -1,19 +1,22 @@
 # yaml-language-server: $schema=../.agents/skills/proven-needs/schemas/constraints.schema.json
 
 schema_version: "1.0.0"
-version: "1.0.0"
-last_updated: "2026-03-28"
+version: "2.0.0"
+last_updated: "2026-04-02"
 
 categories:
   - name: Security
     constraints:
       - id: C-001
         text: >-
-          The system SHALL NOT mount host directories into the VM.
+          The system SHALL mount only explicitly configured project-scoped host
+          directories into the VM.
         rationale: >-
-          Host directory mounts create an exfiltration path for secrets
-          stored on the host (e.g., ~/.ssh, ~/.aws). Complete isolation
-          prevents compromised agents from accessing host credentials.
+          Repo-scoped mounts are allowed for local development workflows, but
+          broad host filesystem exposure is still disallowed. Restricting mounts
+          to explicit project directories preserves the VM boundary for the rest
+          of the host and works with C-008, which still forbids exposing host
+          credentials to the VM.
         added: "2026-03-25"
 
       - id: C-002

@@ -1,25 +1,27 @@
 = Design: Dev Environment Setup
-:version: 4.0.0
-:source-spec-version: 4.0.0
+:version: 5.0.0
+:source-spec-version: 5.0.0
 :status: Current
-:last-updated: 2026-04-01
+:last-updated: 2026-04-02
 :feature: dev-env-setup
 :toc:
 
 == Technical Context
 
-This feature is being reduced to a first MVP. The repository should center on
-three inputs only:
+This feature keeps the simplified MVP launch path and extends it with one
+optional repo-scoped host mount. The repository still centers on checked-in
+launch inputs, but the create flow may now attach one explicit project
+directory after the VM is ready.
+
+The core inputs remain:
 
 * a checked-in `devvm.yaml` machine config
 * a checked-in cloud-init file
 * a thin Go `create` command
 
-The prior design described a larger provisioning workflow with rendered
-cloud-init, secrets handling, repository cloning, and guest bootstrap logic.
-That behavior is intentionally removed from the MVP. The CLI is reduced to
-loading configuration, validating the referenced cloud-init file, invoking
-`multipass launch`, and waiting for cloud-init completion.
+The prior design removed all host mounts. This revision restores a narrower
+workflow: one optional repo-scoped `multipass mount`, controlled explicitly by
+`devvm.yaml`, with no broader host filesystem sharing.
 
 == Decisions and Constraints
 
@@ -28,9 +30,9 @@ loading configuration, validating the referenced cloud-init file, invoking
 
 Relevant constraints from `docs/constraints.yaml`:
 
-* C-001: No host directory mounts
+* C-001: Only explicitly configured project-scoped host mounts
 * C-002: Network egress restricted to essential ports via UFW
-* C-004: SSH disabled
+* C-004: SSH access limited to the path Multipass requires
 * C-005: Non-root user execution
 
 No new ADR is needed for this simplification. The MVP keeps the accepted Go CLI
@@ -43,10 +45,13 @@ The existing repository already has the required technical foundation:
 * a Go CLI entrypoint in `cmd/devvm`
 * internal packages for config loading and Multipass execution
 * a checked-in cloud-init file that already carries the guest hardening logic
+* a thin Multipass wrapper that can grow by one `set` step and one `mount` step
 
 The simplification mainly removes excess configuration and orchestration.
 
-No unresolved unknowns remain for this MVP design.
+No unresolved unknowns remain for this revision. The project accepts the trade-
+off that a mounted repo is writable by the VM because the desired workflow is a
+single trusted project directory, not a full sandbox with zero host sharing.
 
 == System Design
 
@@ -64,6 +69,8 @@ flowchart LR
     subgraph MP["Multipass"]
         LAUNCH[multipass launch]
         STATUS[multipass exec cloud-init status --wait]
+        SET[multipass set local.privileged-mounts]
+        MOUNT[multipass mount]
     end
 
     subgraph VM["Guest VM"]
@@ -77,6 +84,8 @@ flowchart LR
     LAUNCH --> GUEST
     GUEST --> BOOT
     CLI --> STATUS
+    CLI --> SET
+    SET --> MOUNT
 ----
 
 === Create Flow
@@ -96,6 +105,8 @@ sequenceDiagram
     MP->>VM: Start guest
     VM->>VM: Apply checked-in cloud-init
     CLI->>MP: multipass exec cloud-init status --wait
+    CLI->>MP: multipass set local.privileged-mounts <bool> (optional)
+    CLI->>MP: multipass mount <host> <instance>:<guest> (optional)
     CLI-->>User: Ready message with VM name
 ----
 
@@ -103,12 +114,13 @@ sequenceDiagram
 
 ==== `devvm.yaml`
 
-`devvm.yaml` is the only required project configuration file. For the MVP it
-defines only the values needed to launch a VM:
+`devvm.yaml` is the only required project configuration file. It defines the
+values needed to launch a VM and, optionally, one repo-scoped mount:
 
 * instance name, or omission to trigger name derivation
 * CPU, memory, disk, and Ubuntu release
 * path to the checked-in cloud-init file
+* optional host path, guest path, and privileged mount setting for one repo
 
 Relative paths are resolved from the config file directory.
 
@@ -118,36 +130,57 @@ The Go CLI stays intentionally thin. It is responsible for:
 
 * loading and validating `devvm.yaml`
 * resolving the cloud-init path
+* resolving and validating the optional host mount path
 * deriving a fallback instance name from the working directory
 * calling `multipass launch` with the configured machine values
 * waiting for `cloud-init status --wait`
+* optionally configuring `local.privileged-mounts`
+* optionally mounting one host repo into the guest
 * reporting success or failure
 
 The command surface remains one operation: `create`.
 
 ==== Multipass Adapter
 
-The Multipass wrapper exposes only the operations required by the MVP:
+The Multipass wrapper exposes only the operations required by the current
+workflow:
 
 * launch a fresh VM with sizing, release, and cloud-init path
 * wait for cloud-init completion inside the launched VM
+* set the local privileged mount policy
+* mount one host path into the launched VM
 
-It does not implement file transfer, post-boot execution, or clone workflows.
+It still does not implement file transfer, arbitrary post-boot execution, or
+clone workflows.
 
 === Guest Components
 
 ==== Checked-In Cloud-Init
 
-The checked-in cloud-init file becomes the full guest provisioning contract for
-the MVP. It is responsible for the secure runtime defaults required by the spec:
+The checked-in cloud-init file remains the guest provisioning contract for the
+runtime posture required by the spec:
 
 * creating the non-root guest user
 * denying sudo access for that user
-* disabling SSH access
+* allowing only the SSH path Multipass requires for guest operations
 * configuring UFW with default deny policies and explicit outbound allow rules
 
 The CLI treats this file as an opaque launch input. The CLI validates that the
 path exists and passes it to Multipass unchanged.
+
+==== Optional Repo Mount
+
+When `devvm.yaml` includes a `mount` section, the create flow performs one
+additional host-side workflow after `cloud-init` completes:
+
+* validate that the host path exists and is a directory
+* validate that the guest path is absolute
+* set `local.privileged-mounts` to the declared boolean value
+* call `multipass mount <host> <instance>:<guest>`
+
+The mount remains intentionally narrow: one explicit project directory. The
+design does not support mounting the home directory, mounting multiple paths, or
+implicit host sharing.
 
 === Failure Handling
 
@@ -161,6 +194,9 @@ Failure classes:
 * missing or unreadable cloud-init file
 * Multipass launch failure
 * cloud-init completion failure
+* invalid mount configuration
+* privileged mount setting failure
+* mount command failure
 
 Post-launch failures are surfaced with the instance name so the developer can
 inspect or delete the VM manually.
@@ -191,7 +227,15 @@ Requirements::
 * DEV-008: The checked-in cloud-init file leaves the guest user without administrative privileges.
 * DEV-009: The checked-in cloud-init file sets deny-by-default firewall policies.
 * DEV-010: The checked-in cloud-init file defines the allowed outbound ports.
-* DEV-011: The checked-in cloud-init file disables SSH access while allowing `multipass shell` usage.
+* DEV-011: The checked-in cloud-init file allows only the SSH access Multipass requires while keeping broader guest exposure denied by default.
+
+=== US-004: Attach a Repo-Scoped Host Mount
+
+Components:: `devvm.yaml`, `schemas/devvm.schema.json`, `internal/config`, `internal/create`, `internal/multipass`
+Requirements::
+* DEV-012: The config contract optionally declares one mount and the loader validates the host path, guest path, and privileged flag before mount execution.
+* DEV-013: After guest readiness, the create flow sets `local.privileged-mounts` and mounts the configured host directory into the configured guest path.
+* DEV-014: Mount-setting or mount-command failures surface as create failures and do not report success.
 
 == File Structure
 

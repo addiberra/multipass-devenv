@@ -6,7 +6,8 @@ Minimal MVP for launching a Multipass VM from two checked-in inputs:
 - `opencode-sandbox.yaml`
 
 The Go CLI reads `devvm.yaml`, passes the referenced cloud-init file to
-Multipass, and waits for cloud-init to finish.
+Multipass, waits for cloud-init to finish, and can optionally mount one
+explicit host repo into the VM.
 
 ## Prerequisites
 
@@ -76,6 +77,8 @@ multipass exec <vm-name> -- sudo -iu agent -- opencode
 
 The `agent` user's workspace is `/home/agent/workspace`.
 
+If you configure a mount, the repo appears at the `mount.guest_path` you chose.
+
 ## Config File
 
 `devvm.yaml` is validated against `schemas/devvm.schema.json`.
@@ -85,6 +88,11 @@ Example:
 ```yaml
 schema_version: "1.0"
 cloud_init: "./opencode-sandbox.yaml"
+
+mount:
+  host_path: "~/projects/my-repo"
+  guest_path: "/home/agent/workspace/my-repo"
+  privileged: true
 
 instance:
   name: "my-project-devvm"
@@ -97,12 +105,20 @@ instance:
 If `instance.name` is omitted, the CLI derives a valid Multipass name from the
 project directory.
 
+The `mount` section is optional. When present:
+
+- `host_path` must resolve to an existing host directory
+- `guest_path` must be an absolute path inside the VM
+- `privileged` controls whether the CLI runs `multipass set local.privileged-mounts=<bool>` before mounting
+
 ## How It Works
 
 1. The CLI reads and validates `devvm.yaml`.
 2. It resolves the configured cloud-init file path.
 3. It launches a fresh Ubuntu VM with `multipass launch`.
-4. It waits for `cloud-init status --wait` before reporting success.
+4. It waits for `cloud-init status --wait`.
+5. If `mount` is configured, it sets `local.privileged-mounts` and runs `multipass mount`.
+6. It reports success.
 
 ## Verification
 
@@ -128,6 +144,12 @@ Expected results:
 - `sudo -n true` fails
 - UFW shows deny-by-default policies with outbound allows plus inbound SSH for Multipass access
 - SSH remains available so `multipass exec` and `multipass shell` work
+
+If you configured a mount, also verify:
+
+```bash
+ls /home/agent/workspace/my-repo
+```
 
 ## Repository Layout
 

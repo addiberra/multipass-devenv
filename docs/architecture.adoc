@@ -1,6 +1,6 @@
 = System Architecture
-:version: 4.0.0
-:last-updated: 2026-04-01
+:version: 5.0.0
+:last-updated: 2026-04-02
 :toc:
 
 == Feature Design Sources
@@ -9,17 +9,16 @@
 |===
 | Feature | Design Version
 
-| dev-env-setup | 4.0.0
+| dev-env-setup | 5.0.0
 |===
 
 == Overview
 
 This project is a minimal Go CLI for launching an isolated Ubuntu VM with
 Multipass from two checked-in inputs: `devvm.yaml` and `opencode-sandbox.yaml`.
-The VM boundary remains the primary security control. The host-side tool does
-not render extra provisioning data, transfer files after boot, or manage
-repository cloning. It validates the machine config, launches the VM, and waits
-for cloud-init to finish.
+The VM boundary remains the primary security control. The host-side tool
+validates the machine config, launches the VM, waits for cloud-init to finish,
+and may then attach one explicit repo-scoped host mount.
 
 == System Context
 
@@ -30,10 +29,10 @@ C4Context
 
   Person(developer, "Developer", "Launches and enters an isolated development VM")
   System_Ext(multipass, "Multipass", "Creates and manages local Ubuntu VMs")
-  System(devvm, "Multipass Dev Environment", "Thin config-driven VM launcher")
+  System(devvm, "Multipass Dev Environment", "Thin config-driven VM launcher with optional repo mount")
 
   Rel(developer, devvm, "Runs", "devvm create")
-  Rel(devvm, multipass, "Invokes", "launch / exec")
+  Rel(devvm, multipass, "Invokes", "launch / exec / set / mount")
   Rel(developer, multipass, "Enters VM", "multipass shell")
 ----
 
@@ -48,7 +47,7 @@ C4Container
   System_Ext(multipass, "Multipass", "Local VM manager")
 
   System_Boundary(host, "Host Machine") {
-    Container(cli, "devvm create", "Go", "Validates config and launches the VM")
+    Container(cli, "devvm create", "Go", "Validates config, launches the VM, and optionally mounts one host repo")
     Container(config, "devvm.yaml", "File", "Project-local machine configuration")
     Container(cloudinit, "opencode-sandbox.yaml", "File", "Checked-in guest provisioning file")
   }
@@ -63,7 +62,7 @@ C4Container
   Rel(developer, cli, "Runs")
   Rel(cli, config, "Reads")
   Rel(cli, cloudinit, "Resolves path to")
-  Rel(cli, multipass, "Launches VM through")
+  Rel(cli, multipass, "Launches VM and optional mount flow through")
   Rel(multipass, ubuntu, "Creates")
   Rel(ubuntu, ci, "Executes")
   Rel(ci, user, "Creates and hardens")
@@ -80,7 +79,7 @@ C4Component
   Container_Boundary(host, "Host Tooling") {
     Component(cmd, "cmd/devvm", "Go", "CLI entrypoint")
     Component(cfg, "internal/config", "Go", "Config parsing, path resolution, and validation")
-    Component(flow, "internal/create", "Go", "Coordinates create flow")
+    Component(flow, "internal/create", "Go", "Coordinates create flow and optional mount steps")
     Component(mp, "internal/multipass", "Go", "Multipass subprocess wrapper")
   }
 
@@ -110,7 +109,7 @@ C4Deployment
     }
   }
 
-  Rel(devvm_cli, multipassd, "launch / exec(status)")
+  Rel(devvm_cli, multipassd, "launch / exec(status) / set / mount")
 ----
 
 == Technology Stack
@@ -144,19 +143,21 @@ C4Deployment
 
 === Isolation Boundary
 
-The primary security boundary is the Multipass VM. The host CLI does not mount
-host directories into the guest.
+The primary security boundary is the Multipass VM. The host CLI may mount one
+explicitly configured project directory into the guest after launch, but does
+not expose broader host paths.
 
 === Provisioning Boundary
 
-Provisioning is entirely defined by the checked-in `opencode-sandbox.yaml`
-cloud-init file. The host-side CLI does not inject secrets or perform post-boot
-file transfer.
+Provisioning is defined by the checked-in `opencode-sandbox.yaml` cloud-init
+file plus an optional post-boot repo mount declared in `devvm.yaml`. The CLI
+does not inject secrets or perform general file transfer.
 
 === Access Model
 
-The VM is accessed through `multipass shell`. SSH is disabled in the guest. The
-runtime user inside the VM is non-root and is not granted sudo access.
+The VM is accessed through Multipass-managed guest operations such as
+`multipass shell` and `multipass exec`. The runtime user inside the VM is
+non-root and is not granted sudo access.
 
 === Network Egress Controls
 

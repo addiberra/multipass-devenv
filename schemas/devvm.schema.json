@@ -16,6 +16,29 @@
       "minLength": 1,
       "description": "Relative or absolute path to the checked-in cloud-init file."
     },
+    "mount": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["host_path", "guest_path", "privileged"],
+      "description": "Optional repo-scoped host mount attached after launch.",
+      "properties": {
+        "host_path": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Host directory to mount into the VM. Supports relative paths and ~/ expansion."
+        },
+        "guest_path": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^/.*",
+          "description": "Absolute target path inside the guest."
+        },
+        "privileged": {
+          "type": "boolean",
+          "description": "Whether the create flow should set local.privileged-mounts before mounting."
+        }
+      }
+    },
     "instance": {
       "type": "object",
       "additionalProperties": false,

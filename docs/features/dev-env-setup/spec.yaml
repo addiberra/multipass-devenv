@@ -3,15 +3,16 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "4.1.0"
-last_updated: "2026-04-01"
+version: "5.0.0"
+last_updated: "2026-04-02"
 
 constraint_notes:
-  - constraint: "The system SHALL NOT mount host directories into the VM."
+  - constraint: "The system SHALL mount only explicitly configured project-scoped host directories into the VM."
     category: Security
     note: >-
-      C-001 forbids host directory mounts. The MVP uses only checked-in inputs
-      passed to Multipass during launch.
+      C-001 allows only one explicit project-scoped host mount. The create flow
+      validates the configured host path instead of exposing broader host
+      directories.
 
   - constraint: "The system SHALL restrict network egress to essential ports via UFW."
     category: Security
@@ -163,3 +164,45 @@ stories:
           Run the create command and confirm UFW permits inbound TCP port 22
           while the VM remains accessible via `multipass exec` and
           `multipass shell`.
+
+  - id: US-004
+    title: Attach a Repo-Scoped Host Mount
+    narrative:
+      as_a: developer
+      i_want: to optionally declare one host repo mount in `devvm.yaml`
+      so_that: the VM can work directly in that repo without broader host access
+    requirements:
+      - id: DEV-012
+        text: >-
+          Where a `mount` section is present in `devvm.yaml`, the system shall
+          validate the configured host path, guest path, and privileged mount
+          setting before starting the mount workflow.
+        ears_type: optional-feature
+        verification: >-
+          Add a valid `mount` section to `devvm.yaml` and run the create
+          command. Confirm the command accepts the config. Then try an invalid
+          host path and a non-absolute guest path and confirm the command fails
+          before the mount workflow begins.
+
+      - id: DEV-013
+        text: >-
+          Where a `mount` section is present in `devvm.yaml`, when guest setup
+          completes, the system shall configure `local.privileged-mounts` to the
+          declared value before mounting the configured host path into the guest
+          path.
+        ears_type: complex
+        verification: >-
+          Add a `mount` section with `privileged: true`, run the create command,
+          and confirm the command configures the Multipass setting before the
+          mount succeeds. Repeat with `privileged: false` and confirm the
+          setting changes accordingly.
+
+      - id: DEV-014
+        text: >-
+          If the configured mount operation fails, then the system shall display
+          the failure and stop without reporting the environment as ready.
+        ears_type: unwanted-behavior
+        verification: >-
+          Configure a mount that Multipass cannot complete, run the create
+          command, and confirm the command exits with the mount error and does
+          not print the ready instructions.

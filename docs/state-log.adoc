@@ -1,5 +1,19 @@
 = State Transition Log
-:last-updated: 2026-04-01
+:last-updated: 2026-04-02
+
+== TRANSITION-007
+:date: 2026-04-02
+:intent: Support an optional repo-scoped Multipass mount with configurable privileged mount behavior
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: The project supports an optional `mount` section in `devvm.yaml` so the create flow can enable or disable `local.privileged-mounts` and mount one explicit host repo into the VM after launch
+:prior-state: The project forbids host directory mounts and the CLI only launches a VM from checked-in inputs with no post-boot mount workflow
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/constraints.yaml (v2.0.0), docs/features/dev-env-setup/spec.yaml (v5.0.0), docs/features/dev-env-setup/design.adoc (v5.0.0), docs/features/dev-env-setup/tasks.yaml (v6.0.0), docs/architecture.adoc (v5.0.0), docs/state-log.adoc, README.md, devvm.yaml, schemas/devvm.schema.json, internal/config/config.go, internal/config/config_test.go, internal/create/create.go, internal/multipass/multipass.go
 
 == TRANSITION-006
 :date: 2026-04-01

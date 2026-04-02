@@ -2,62 +2,62 @@
 
 schema_version: "3.0.0"
 feature: dev-env-setup
-version: "5.0.0"
+version: "6.0.0"
 status: Implemented
-source_design_version: "4.0.0"
-source_spec_version: "4.0.0"
-last_updated: "2026-04-01"
+source_design_version: "5.0.0"
+source_spec_version: "5.0.0"
+last_updated: "2026-04-02"
 
 overview: >-
-  Simplify the repository to an MVP with one checked-in cloud-init file, one
-  minimal `devvm.yaml` machine config, and one thin Go `create` command. The
-  work is organized into config simplification, launch-path simplification,
-  repository cleanup, and final validation.
+  Extend the MVP launch flow with one optional repo-scoped host mount. The work
+  is organized into config and schema updates, create-flow and Multipass mount
+  support, documentation updates, and final validation.
 
 tasks:
   - id: TASK-001
-    title: Simplify the machine config contract
+    title: Extend the machine config contract for an optional mount
     depends_on: []
     components: [devvm.yaml, schemas/devvm.schema.json, internal/config]
-    stories: [US-001]
-    requirements: [DEV-001, DEV-002, DEV-003, DEV-004]
+    stories: [US-001, US-004]
+    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-012]
     done: true
     description: >-
-      Reduce `devvm.yaml` and the Go config loader to the MVP machine fields
-      only. Validate instance sizing, release, and cloud-init path, and derive
-      a fallback instance name from the working directory when needed.
+      Extend `devvm.yaml`, its schema, and the Go config loader with one
+      optional mount definition. Validate the host path, guest path, and
+      privileged flag while preserving the existing launch validation and
+      fallback instance-name behavior.
 
   - id: TASK-002
-    title: Simplify the Multipass create flow
+    title: Add privileged mount and repo mount steps to the create flow
     depends_on: [TASK-001]
     components: [cmd/devvm, internal/create, internal/multipass]
-    stories: [US-001, US-002]
-    requirements: [DEV-001, DEV-005, DEV-006]
+    stories: [US-001, US-002, US-004]
+    requirements: [DEV-001, DEV-005, DEV-006, DEV-013, DEV-014]
     done: true
     description: >-
-      Reduce the CLI and Multipass wrapper to a single launch path that uses
-      the configured cloud-init file and waits for cloud-init completion before
-      reporting success.
+      Keep the existing launch path, then, when a mount is configured, set
+      `local.privileged-mounts`, run `multipass mount`, and surface failures as
+      create errors instead of success.
 
   - id: TASK-003
-    title: Align the checked-in cloud-init and repository layout to the MVP
+    title: Update documentation for the optional mount workflow
     depends_on: [TASK-002]
-    components: [opencode-sandbox.yaml, README.md]
-    stories: [US-002, US-003]
-    requirements: [DEV-005, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011]
+    components: [README.md, docs/features/dev-env-setup, docs/architecture.adoc]
+    stories: [US-002, US-003, US-004]
+    requirements: [DEV-005, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014]
     done: true
     description: >-
-      Keep one checked-in cloud-init file as the guest provisioning contract,
-      remove obsolete provisioning helpers and extra templates, and update the
-      repository documentation and structure to match the MVP.
+      Update the feature docs, architecture document, and README so they
+      describe the optional repo mount workflow and its scoped security model.
 
   - id: TASK-004
-    title: Validate the MVP launch workflow
+    title: Validate the mounted launch workflow
     depends_on: [TASK-003]
     components: [cmd/devvm, internal/config, internal/create, internal/multipass, docs/features/dev-env-setup]
-    stories: [US-001, US-002, US-003]
-    requirements: [DEV-002, DEV-003, DEV-004, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011]
+    stories: [US-001, US-002, US-003, US-004]
+    requirements: [DEV-002, DEV-003, DEV-004, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014]
     done: true
     description: >-
-      Run task and spec validators plus code-level verification for the reduced
-      CLI. Confirm the documented workflow matches the implemented MVP behavior.
+      Run task and spec validators plus Go tests and build verification for the
+      updated CLI. Confirm the documented workflow matches the implemented mount
+      behavior.

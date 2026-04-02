@@ -20,9 +20,16 @@ var (
 type Config struct {
 	SchemaVersion string         `yaml:"schema_version"`
 	CloudInit     string         `yaml:"cloud_init"`
+	Mount         *MountConfig   `yaml:"mount,omitempty"`
 	Instance      InstanceConfig `yaml:"instance"`
 
 	configDir string
+}
+
+type MountConfig struct {
+	HostPath   string `yaml:"host_path"`
+	GuestPath  string `yaml:"guest_path"`
+	Privileged bool   `yaml:"privileged"`
 }
 
 type InstanceConfig struct {
@@ -90,6 +97,29 @@ func (c *Config) Validate() error {
 			problems = append(problems, fmt.Sprintf("cloud_init must be a file: %s", c.CloudInit))
 		}
 	}
+	if c.Mount != nil {
+		if c.Mount.HostPath == "" {
+			problems = append(problems, "mount.host_path is required")
+		} else {
+			hostPath, err := c.resolveHostPath(c.Mount.HostPath)
+			if err != nil {
+				problems = append(problems, fmt.Sprintf("mount.host_path is invalid: %v", err))
+			} else {
+				c.Mount.HostPath = hostPath
+				info, err := os.Stat(c.Mount.HostPath)
+				if err != nil {
+					problems = append(problems, fmt.Sprintf("mount.host_path does not exist: %s", c.Mount.HostPath))
+				} else if !info.IsDir() {
+					problems = append(problems, fmt.Sprintf("mount.host_path must be a directory: %s", c.Mount.HostPath))
+				}
+			}
+		}
+		if c.Mount.GuestPath == "" {
+			problems = append(problems, "mount.guest_path is required")
+		} else if !filepath.IsAbs(c.Mount.GuestPath) {
+			problems = append(problems, "mount.guest_path must be an absolute path")
+		}
+	}
 
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
@@ -107,6 +137,24 @@ func (c *Config) resolvePath(path string) string {
 		return path
 	}
 	return filepath.Join(c.configDir, path)
+}
+
+func (c *Config) resolveHostPath(path string) (string, error) {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("resolve home directory: %w", err)
+		}
+		if path == "~" {
+			return home, nil
+		}
+		path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+	}
+
+	if filepath.IsAbs(path) {
+		return path, nil
+	}
+	return filepath.Join(c.configDir, path), nil
 }
 
 func autoName(dir string) string {

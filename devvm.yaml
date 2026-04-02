@@ -3,6 +3,11 @@
 schema_version: "1.0"
 cloud_init: "./opencode-sandbox.yaml"
 
+mount:
+  host_path: "~/projects/my-repo"
+  guest_path: "/home/agent/workspace/my-repo"
+  privileged: true
+
 instance:
   name: "my-project-devvm"
   ubuntu_release: "24.04"
