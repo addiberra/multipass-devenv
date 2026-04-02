@@ -3,7 +3,7 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "6.0.0"
+version: "6.1.0"
 last_updated: "2026-04-02"
 
 constraint_notes:
@@ -32,6 +32,20 @@ constraint_notes:
     note: >-
       C-005 is satisfied by the guest setup baked into the checked-in cloud-init
       file.
+
+  - constraint: "All apt packages SHALL be installed from official Ubuntu repositories only."
+    category: Supply Chain
+    note: >-
+      C-010 applies to the checked-in cloud-init bootstrap package set. The VM
+      uses Ubuntu repositories for base guest packages before provisioning any
+      Homebrew-managed tools.
+
+  - constraint: "All dependencies SHALL be pinned to specific versions, never using 'latest' tag or floating version specifiers."
+    category: Supply Chain
+    note: >-
+      C-014 applies to the Homebrew bootstrap path. The provisioning flow pins
+      the Homebrew installer by commit and checksum, then installs tools from a
+      pinned `homebrew/core` snapshot instead of floating package metadata.
 
 stories:
   - id: US-001
@@ -243,3 +257,66 @@ stories:
           Configure a mount that Multipass cannot complete, run the create
           command, and confirm the command exits with the mount error and does
           not print the ready instructions.
+
+  - id: US-006
+    title: Provision Pinned Tooling with Apt and Homebrew
+    narrative:
+      as_a: developer
+      i_want: the checked-in cloud-init files to use the safest supported package source for each tool
+      so_that: the VM stays auditable and repeatable without falling back to npm-based global installs
+    requirements:
+      - id: DEV-018
+        text: >-
+          The checked-in cloud-init files shall install guest bootstrap packages
+          from official Ubuntu repositories before provisioning Homebrew-managed
+          tools.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect the checked-in cloud-init files and confirm their base package
+          lists are satisfied by Ubuntu repositories. After VM creation, confirm
+          the bootstrap packages are present before the Homebrew tool install
+          step runs.
+
+      - id: DEV-019
+        text: >-
+          When guest provisioning bootstraps Homebrew, the system shall download
+          the official Homebrew installer from a checked-in commit revision and
+          verify the install script checksum before executing it.
+        ears_type: event-driven
+        verification: >-
+          Inspect the checked-in cloud-init installer script and confirm it uses
+          an explicit installer commit URL plus a matching checksum verification
+          step before Homebrew installation proceeds.
+
+      - id: DEV-020
+        text: >-
+          When guest provisioning installs Homebrew-managed tools, the system
+          shall resolve formulae from a checked-in `homebrew/core` snapshot and
+          disable automatic Homebrew updates during provisioning.
+        ears_type: event-driven
+        verification: >-
+          Inspect the checked-in cloud-init installer script and confirm it
+          checks out a pinned `homebrew/core` commit before any `brew install`
+          step and sets Homebrew to avoid auto-updating during provisioning.
+
+      - id: DEV-021
+        text: >-
+          The repository-specific cloud-init file shall install pinned OpenCode
+          and Go toolchain packages from the pinned Homebrew snapshot.
+        ears_type: ubiquitous
+        verification: >-
+          Create the repo-specific VM and confirm `brew list --versions`
+          reports the pinned OpenCode and Go versions declared by the checked-in
+          cloud-init file.
+
+      - id: DEV-022
+        text: >-
+          The reusable starter cloud-init file shall install pinned OpenCode
+          from the pinned Homebrew snapshot and shall not install repo-specific
+          Go tooling.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect the reusable starter cloud-init file and confirm its
+          Homebrew-managed package list includes OpenCode only. Then create a VM
+          from the starter artifacts and confirm OpenCode is installed while Go
+          is absent.

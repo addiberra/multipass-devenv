@@ -1,5 +1,5 @@
 = System Architecture
-:version: 6.0.0
+:version: 6.1.0
 :last-updated: 2026-04-02
 :toc:
 
@@ -9,7 +9,7 @@
 |===
 | Feature | Design Version
 
-| dev-env-setup | 6.0.0
+| dev-env-setup | 6.1.0
 |===
 
 == Overview
@@ -20,7 +20,9 @@ repository ships both reusable template artifacts under `templates/` and a
 repo-specific root setup for self-hosting. The VM boundary remains the primary
 security control. The host-side tool validates the machine config, launches the
 VM, waits for cloud-init to finish, and may then attach one explicit repo-
-scoped host mount.
+scoped host mount. Guest provisioning uses Ubuntu `apt` for bootstrap packages
+and a pinned Homebrew layer for userland tools such as OpenCode and the repo-
+specific Go toolchain.
 
 == System Context
 
@@ -58,6 +60,7 @@ C4Container
   System_Boundary(vm, "Multipass VM") {
     Container(ubuntu, "Ubuntu 24.04", "VM", "Fresh guest instance")
     Container(ci, "cloud-init", "Provisioning", "Applies guest setup on first boot")
+    Container(brew, "Homebrew", "Package manager", "Pinned tool layer for OpenCode and optional repo-specific Go")
     Container(user, "agent user", "Unix user", "Non-root runtime identity")
     Container(ufw, "UFW rules", "Firewall", "Default-deny inbound and outbound policy")
   }
@@ -68,6 +71,8 @@ C4Container
   Rel(cli, multipass, "Launches VM and optional mount flow through")
   Rel(multipass, ubuntu, "Creates")
   Rel(ubuntu, ci, "Executes")
+  Rel(ci, brew, "Bootstraps and installs tools with")
+  Rel(brew, user, "Provides CLI tools to")
   Rel(ci, user, "Creates and hardens")
   Rel(ci, ufw, "Configures")
 ----
@@ -135,11 +140,15 @@ C4Deployment
 
 | Guest Provisioning
 | cloud-init
-| Uses a checked-in provisioning file applied during first boot, with reusable templates shipped alongside the repo-specific setup
+| Uses checked-in provisioning files applied during first boot, including pinned Homebrew bootstrap scripts and fixed tool bundles
 
 | Network Firewall
 | UFW
 | Enforces deny-by-default networking inside the guest
+
+| Userland Tooling
+| Homebrew
+| Installs pinned OpenCode and repo-specific Go packages from a pinned `homebrew/core` snapshot
 |===
 
 == Security Architecture
@@ -156,7 +165,10 @@ Provisioning is defined by the cloud-init file referenced from `devvm.yaml`
 plus an optional post-boot repo mount declared in that same config. The root
 files are this repository's self-hosting setup, while `templates/` contains the
 copy-and-adapt starter pair for other repos. The CLI does not inject secrets or
-perform general file transfer.
+perform general file transfer. The guest package policy is split: Ubuntu `apt`
+installs bootstrap packages from official repositories, then a pinned
+Homebrew-install script and pinned `homebrew/core` snapshot install the
+Homebrew-managed tool bundle.
 
 === Access Model
 
@@ -169,3 +181,16 @@ non-root and is not granted sudo access.
 UFW is configured inside the guest by cloud-init with default-deny inbound and
 outbound policies, plus explicit outbound allows defined in the checked-in
 cloud-init file.
+
+=== Supply-Chain Controls
+
+The Homebrew bootstrap path is pinned rather than floating:
+
+* the installer is downloaded from a checked-in `Homebrew/install` commit URL
+* the installer SHA-256 is verified before execution
+* `homebrew/core` is checked out to a checked-in commit before any tool install
+* `HOMEBREW_NO_AUTO_UPDATE=1` is used during provisioning so formula resolution
+  stays on that pinned snapshot
+
+This keeps the guest aligned with the project's supply-chain constraints while
+still using the officially supported Homebrew Linux prefix.

@@ -1,6 +1,20 @@
 = State Transition Log
 :last-updated: 2026-04-02
 
+== TRANSITION-009
+:date: 2026-04-02
+:intent: Adopt a pinned Homebrew provisioning policy for OpenCode workflows while keeping apt for guest bootstrap packages
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: The checked-in cloud-init files bootstrap Homebrew from a pinned official installer and pinned homebrew/core snapshot, install fixed OpenCode tool bundles, and document the apt-versus-Homebrew package policy for repo and template VMs
+:prior-state: The repo-specific VM installs OpenCode from npm, the template relies on apt-only packages, and the provisioning docs do not define when to prefer apt versus Homebrew
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v6.1.0), docs/features/dev-env-setup/design.adoc (v6.1.0), docs/features/dev-env-setup/tasks.yaml (v7.1.0), docs/architecture.adoc (v6.1.0), docs/state-log.adoc, README.md, opencode-sandbox.repo.yaml, templates/opencode-sandbox.template.yaml
+
 == TRANSITION-008
 :date: 2026-04-02
 :intent: Separate reusable Multipass templates from this repository's self-hosting dev VM setup

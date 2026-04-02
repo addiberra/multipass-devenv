@@ -4,10 +4,10 @@
 # OpenCode Agent Sandbox — This Repository's Dev VM
 # Repo-specific cloud-init for working on multipass-devenv inside Multipass.
 #
-# SECURITY: Installs a pinned OpenCode CLI npm package version from the official
-# npm registry using Ubuntu's nodejs and npm packages.
+# SECURITY: Uses apt for Ubuntu bootstrap packages and a pinned Homebrew
+# installer plus pinned homebrew/core snapshot for userland tools.
 #
-# To update OpenCode, change OPENCODE_VERSION below.
+# To update Homebrew or tool versions, change the pinned values below.
 # =============================================================================
 
 users:
@@ -27,10 +27,9 @@ packages:
   - curl
   - git
   - jq
-  - nodejs
-  - npm
   - build-essential
-  - ripgrep
+  - procps
+  - file
   - fd-find
 
 write_files:
@@ -38,9 +37,14 @@ write_files:
     owner: root:root
     permissions: "0644"
     content: |
+      HOMEBREW_INSTALL_COMMIT=6d5e2670d07961e7985d2079a2f0a484420f3c38
+      HOMEBREW_INSTALL_SHA256=dfd5145fe2aa5956a600e35848765273f5798ce6def01bd08ecec088a1268d91
+      HOMEBREW_CORE_COMMIT=3fab2da1d77b304ea2c3907c9e28fd4c276215e6
+      HOMEBREW_PACKAGES="opencode go"
       OPENCODE_VERSION=1.3.10
+      GO_VERSION=1.26.1
 
-  - path: /usr/local/sbin/install-opencode.sh
+  - path: /usr/local/sbin/install-homebrew.sh
     owner: root:root
     permissions: "0755"
     content: |
@@ -49,19 +53,91 @@ write_files:
 
       source /etc/opencode-sandbox/version.env
 
-      export npm_config_update_notifier=false
-      export npm_config_fund=false
-      export npm_config_audit=false
+      install_dir=/run/opencode-sandbox
+      installer_path="${install_dir}/install-homebrew.sh"
+      install_url="https://raw.githubusercontent.com/Homebrew/install/${HOMEBREW_INSTALL_COMMIT}/install.sh"
 
-      echo "Installing OpenCode CLI v${OPENCODE_VERSION} from npm..."
-      npm install --global "opencode-ai@${OPENCODE_VERSION}"
+      mkdir -p "${install_dir}"
+      curl -fsSL "${install_url}" -o "${installer_path}"
+      echo "${HOMEBREW_INSTALL_SHA256}  ${installer_path}" | sha256sum --check --status
+      chmod 0755 "${installer_path}"
 
-      if ! command -v opencode >/dev/null 2>&1; then
-        echo "OpenCode CLI was not added to PATH" >&2
+      sudo -u ubuntu -H env NONINTERACTIVE=1 HOMEBREW_NO_INSTALL_FROM_API=1 /bin/bash "${installer_path}"
+
+      core_repo="$(sudo -u ubuntu -H /home/linuxbrew/.linuxbrew/bin/brew --repo homebrew/core)"
+      sudo -u ubuntu -H git -C "${core_repo}" checkout --quiet --detach "${HOMEBREW_CORE_COMMIT}"
+
+  - path: /usr/local/sbin/install-tooling.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      source /etc/opencode-sandbox/version.env
+
+      brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
+      core_repo="$(sudo -u ubuntu -H env HOMEBREW_NO_AUTO_UPDATE=1 "${brew_bin}" --repo homebrew/core)"
+      actual_core_commit="$(sudo -u ubuntu -H git -C "${core_repo}" rev-parse HEAD)"
+
+      if [[ "${actual_core_commit}" != "${HOMEBREW_CORE_COMMIT}" ]]; then
+        echo "homebrew/core commit mismatch: ${actual_core_commit}" >&2
         exit 1
       fi
 
-      echo "OpenCode CLI v${OPENCODE_VERSION} installed at $(command -v opencode)"
+      sudo -u ubuntu -H env HOMEBREW_NO_AUTO_UPDATE=1 "${brew_bin}" install ${HOMEBREW_PACKAGES}
+      sudo -u ubuntu -H env HOMEBREW_NO_AUTO_UPDATE=1 "${brew_bin}" pin ${HOMEBREW_PACKAGES}
+
+      set -- $(sudo -u ubuntu -H env HOMEBREW_NO_AUTO_UPDATE=1 "${brew_bin}" list --versions opencode)
+      actual_opencode_version="${2:-}"
+      if [[ "${actual_opencode_version}" != "${OPENCODE_VERSION}" ]]; then
+        echo "Unexpected OpenCode version: ${actual_opencode_version}" >&2
+        exit 1
+      fi
+
+      set -- $(sudo -u ubuntu -H env HOMEBREW_NO_AUTO_UPDATE=1 "${brew_bin}" list --versions go)
+      actual_go_version="${2:-}"
+      if [[ "${actual_go_version}" != "${GO_VERSION}" ]]; then
+        echo "Unexpected Go version: ${actual_go_version}" >&2
+        exit 1
+      fi
+
+      sudo -u ubuntu -H env PATH=/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/bin:/bin opencode --version
+      sudo -u ubuntu -H env PATH=/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/bin:/bin go version
+
+  - path: /etc/profile.d/homebrew.sh
+    owner: root:root
+    permissions: "0644"
+    content: |
+      export HOMEBREW_NO_AUTO_UPDATE=1
+      if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then
+        eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+      fi
+
+  - path: /usr/local/sbin/verify-tooling.sh
+    owner: root:root
+    permissions: "0755"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      source /etc/opencode-sandbox/version.env
+
+      brew_bin=/home/linuxbrew/.linuxbrew/bin/brew
+      expected_packages="${HOMEBREW_PACKAGES}"
+      installed_packages="$(sudo -u ubuntu -H env HOMEBREW_NO_AUTO_UPDATE=1 "${brew_bin}" list --formula)"
+
+      for package in ${expected_packages}; do
+        if ! grep -qx "${package}" <<<"${installed_packages}"; then
+          echo "Missing package: ${package}" >&2
+          exit 1
+        fi
+      done
+
+      if ! sudo -u ubuntu -H env HOMEBREW_NO_AUTO_UPDATE=1 "${brew_bin}" doctor; then
+        echo "brew doctor reported an issue" >&2
+        exit 1
+      fi
 
   - path: /home/agent/.bashrc
     owner: agent:agent
@@ -70,11 +146,10 @@ write_files:
     content: |
       export HISTFILE=/dev/null
       export HISTSIZE=0
-      export PATH=/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin
+      export PATH=/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/bin:/usr/bin:/bin:/home/agent/.local/bin
       export WORKSPACE=/home/agent/workspace/multipass-devenv
       export XDG_CONFIG_HOME=/home/agent/.config
       export XDG_CACHE_HOME=/home/agent/.cache
-      export npm_config_cache=/home/agent/.npm
       cd "$WORKSPACE" 2>/dev/null || true
 
   - path: /etc/systemd/resolved.conf.d/restricted-dns.conf
@@ -107,16 +182,16 @@ write_files:
 
 runcmd:
   - mkdir -p /etc/opencode-sandbox
-  - /usr/local/sbin/install-opencode.sh
+  - /usr/local/sbin/install-homebrew.sh
+  - /usr/local/sbin/install-tooling.sh
+  - /usr/local/sbin/verify-tooling.sh
   - mkdir -p /home/agent/workspace/multipass-devenv
   - mkdir -p /home/agent/.config/opencode
   - mkdir -p /home/agent/.cache
-  - mkdir -p /home/agent/.npm
   - mkdir -p /home/agent/.local/bin
   - chown -R agent:agent /home/agent/workspace
   - chown -R agent:agent /home/agent/.config
   - chown -R agent:agent /home/agent/.cache
-  - chown -R agent:agent /home/agent/.npm
   - chown -R agent:agent /home/agent/.local
   - chown root:agent /home/agent
   - chmod 750 /home/agent

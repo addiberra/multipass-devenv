@@ -1,6 +1,6 @@
 = Design: Dev Environment Setup
-:version: 6.0.0
-:source-spec-version: 6.0.0
+:version: 6.1.0
+:source-spec-version: 6.1.0
 :status: Current
 :last-updated: 2026-04-02
 :feature: dev-env-setup
@@ -9,10 +9,10 @@
 == Technical Context
 
 This feature keeps the simplified MVP launch path and optional repo-scoped host
-mount, but now separates reusable starter artifacts from the repository's own
-self-hosting setup. The repository still centers on checked-in launch inputs,
-and the create flow may attach one explicit project directory after the VM is
-ready.
+mount, separates reusable starter artifacts from the repository's own
+self-hosting setup, and now defines an explicit package-manager policy for VM
+provisioning. The repository still centers on checked-in launch inputs, and the
+create flow may attach one explicit project directory after the VM is ready.
 
 The core inputs remain:
 
@@ -31,6 +31,15 @@ The prior design removed all host mounts. This revision restores a narrower
 workflow: one optional repo-scoped `multipass mount`, controlled explicitly by
 `devvm.yaml`, with no broader host filesystem sharing.
 
+This revision also splits guest software provisioning into two layers:
+
+* `apt` remains the source of truth for Ubuntu bootstrap and hardening packages
+* Homebrew provides the pinned userland tools that are better supported there
+
+The Homebrew bootstrap itself is pinned to a reviewed `Homebrew/install` commit
+and checksum. Tool installs are resolved from a pinned `homebrew/core` commit so
+the guest does not consume floating package metadata during provisioning.
+
 == Decisions and Constraints
 
 * ADR-0002: Use a Go Create CLI for Config-Driven Multipass Startup (see `docs/adrs/0002-go-create-cli-for-config-driven-multipass-startup.yaml`)
@@ -42,6 +51,8 @@ Relevant constraints from `docs/constraints.yaml`:
 * C-002: Network egress restricted to essential ports via UFW
 * C-004: SSH access limited to the path Multipass requires
 * C-005: Non-root user execution
+* C-010: Apt packages from official Ubuntu repositories only
+* C-014: Dependencies pinned to specific versions
 
 No new ADR is needed for this simplification. The MVP keeps the accepted Go CLI
 and Multipass-based architecture, but removes higher-level provisioning scope.
@@ -56,6 +67,15 @@ The existing repository already has the required technical foundation:
 * a thin Multipass wrapper that can grow by one `set` step and one `mount` step
 
 The simplification mainly removes excess configuration and orchestration.
+
+The provisioning-specific research for this revision produced two decisions:
+
+* OpenCode now has an official `homebrew/core` formula on Linux, so the guest no
+  longer needs a global npm install path for the CLI.
+* The official Homebrew installer is still the supported bootstrap path, but the
+  safest repeatable automation model for this VM is to download a pinned
+  installer revision, verify its checksum, and execute it as the default
+  Multipass `ubuntu` user because the installer refuses direct root execution.
 
 No unresolved unknowns remain for this revision. The project accepts the trade-
 off that a mounted repo is writable by the VM because the desired workflow is a
@@ -85,6 +105,8 @@ flowchart LR
     subgraph VM["Guest VM"]
         GUEST[Ubuntu VM]
         BOOT[cloud-init boot setup]
+        APT[apt bootstrap]
+        BREW[Homebrew tool layer]
     end
 
     CFG --> CLI
@@ -96,6 +118,8 @@ flowchart LR
     CLI --> STATUS
     CLI --> SET
     SET --> MOUNT
+    BOOT --> APT
+    APT --> BREW
 ----
 
 === Create Flow
@@ -176,6 +200,10 @@ runtime posture required by the spec:
 * denying sudo access for that user
 * allowing only the SSH path Multipass requires for guest operations
 * configuring UFW with default deny policies and explicit outbound allow rules
+* installing Ubuntu bootstrap packages from official repositories
+* bootstrapping Homebrew from a pinned installer revision and checksum
+* checking out a pinned `homebrew/core` snapshot before any tool install
+* installing the fixed Homebrew tool bundle for the selected VM role
 
 The CLI treats this file as an opaque launch input. The CLI validates that the
 path exists and passes it to Multipass unchanged.
@@ -187,6 +215,37 @@ For this split, the repository now ships two cloud-init roles:
 
 The template file stays generic, while the repo-specific file may set a repo-
 specific workspace path and onboarding text.
+
+==== Package Policy
+
+The provisioning contract now encodes a package-manager split rather than
+installing everything from one source:
+
+* `apt` installs base guest packages that are part of the Ubuntu runtime and the
+  prerequisites Homebrew requires on Linux (`build-essential`, `procps`, `curl`,
+  `file`, `git`) plus the guest hardening utilities already used by this repo.
+* Homebrew installs userland developer tools that are better supported there.
+
+The Homebrew bootstrap path is intentionally static and auditable:
+
+* download `Homebrew/install` from a checked-in commit URL
+* verify the installer SHA-256 before execution
+* execute the installer as the default `ubuntu` user with
+  `HOMEBREW_NO_INSTALL_FROM_API=1`
+* check out `homebrew/core` to a checked-in commit before any tool install
+* run all `brew install` commands with `HOMEBREW_NO_AUTO_UPDATE=1`
+
+This preserves C-010 for Ubuntu packages and C-014 for Homebrew-managed tools
+without introducing a custom package manager or unsupported Homebrew prefix.
+
+==== Fixed Tool Bundles
+
+The two checked-in cloud-init roles now diverge in their Homebrew package sets:
+
+* `opencode-sandbox.repo.yaml` installs pinned OpenCode and Go because this
+  repository is itself a Go project and the repo VM is meant to build it.
+* `templates/opencode-sandbox.template.yaml` installs pinned OpenCode only so
+  the starter artifact stays generic.
 
 ==== Optional Repo Mount
 
@@ -264,6 +323,16 @@ Requirements::
 * DEV-015: The config contract optionally declares one mount and the loader validates the host path, guest path, and privileged flag before mount execution.
 * DEV-016: After guest readiness, the create flow sets `local.privileged-mounts` and mounts the configured host directory into the configured guest path.
 * DEV-017: Mount-setting or mount-command failures surface as create failures and do not report success.
+
+=== US-006: Provision Pinned Tooling with Apt and Homebrew
+
+Components:: `opencode-sandbox.repo.yaml`, `templates/opencode-sandbox.template.yaml`, guest provisioning scripts
+Requirements::
+* DEV-018: The checked-in cloud-init files use Ubuntu repositories for bootstrap packages before provisioning Homebrew-managed tools.
+* DEV-019: The Homebrew bootstrap path downloads the official installer from a pinned commit and verifies the installer checksum before execution.
+* DEV-020: The Homebrew tool install path checks out a pinned `homebrew/core` snapshot and disables automatic Homebrew updates during provisioning.
+* DEV-021: The repo-specific cloud-init file installs pinned OpenCode and Go packages from the pinned Homebrew snapshot.
+* DEV-022: The reusable starter cloud-init file installs pinned OpenCode only and excludes the repo-specific Go toolchain bundle.
 
 == File Structure
 
