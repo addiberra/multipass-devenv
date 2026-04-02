@@ -1,0 +1,16 @@
+# yaml-language-server: $schema=./schemas/devvm.schema.json
+
+schema_version: "1.0"
+cloud_init: "./opencode-sandbox.repo.yaml"
+
+mount:
+  host_path: "."
+  guest_path: "/home/agent/workspace/multipass-devenv"
+  privileged: true
+
+instance:
+  name: "multipass-devenv-devvm"
+  ubuntu_release: "24.04"
+  cpus: 2
+  memory: "4G"
+  disk: "30G"

@@ -1,0 +1,196 @@
+= System Architecture
+:version: 6.1.0
+:last-updated: 2026-04-02
+:toc:
+
+== Feature Design Sources
+
+[cols="1,1", options="header"]
+|===
+| Feature | Design Version
+
+| dev-env-setup | 6.1.0
+|===
+
+== Overview
+
+This project is a minimal Go CLI for launching an isolated Ubuntu VM with
+Multipass from a checked-in machine config and referenced cloud-init file. The
+repository ships both reusable template artifacts under `templates/` and a
+repo-specific root setup for self-hosting. The VM boundary remains the primary
+security control. The host-side tool validates the machine config, launches the
+VM, waits for cloud-init to finish, and may then attach one explicit repo-
+scoped host mount. Guest provisioning uses Ubuntu `apt` for bootstrap packages
+and a pinned Homebrew layer for userland tools such as OpenCode and the repo-
+specific Go toolchain.
+
+== System Context
+
+[source,mermaid]
+----
+C4Context
+  title System Context - Multipass Dev Environment MVP
+
+  Person(developer, "Developer", "Launches and enters an isolated development VM")
+  System_Ext(multipass, "Multipass", "Creates and manages local Ubuntu VMs")
+  System(devvm, "Multipass Dev Environment", "Thin config-driven VM launcher with optional repo mount")
+
+  Rel(developer, devvm, "Runs", "devvm create")
+  Rel(devvm, multipass, "Invokes", "launch / exec / set / mount")
+  Rel(developer, multipass, "Enters VM", "multipass shell")
+----
+
+== Container View
+
+[source,mermaid]
+----
+C4Container
+  title Container Diagram - Multipass Dev Environment MVP
+
+  Person(developer, "Developer", "Host machine user")
+  System_Ext(multipass, "Multipass", "Local VM manager")
+
+  System_Boundary(host, "Host Machine") {
+    Container(cli, "devvm create", "Go", "Validates config, launches the VM, and optionally mounts one host repo")
+    Container(config, "devvm.yaml", "File", "Repo-local machine configuration for self-hosting")
+    Container(templates, "templates/", "Files", "Reusable starter config and cloud-init artifacts")
+    Container(cloudinit, "opencode-sandbox.repo.yaml", "File", "Repo-specific guest provisioning file")
+  }
+
+  System_Boundary(vm, "Multipass VM") {
+    Container(ubuntu, "Ubuntu 24.04", "VM", "Fresh guest instance")
+    Container(ci, "cloud-init", "Provisioning", "Applies guest setup on first boot")
+    Container(brew, "Homebrew", "Package manager", "Pinned tool layer for OpenCode and optional repo-specific Go")
+    Container(user, "agent user", "Unix user", "Non-root runtime identity")
+    Container(ufw, "UFW rules", "Firewall", "Default-deny inbound and outbound policy")
+  }
+
+  Rel(developer, cli, "Runs")
+  Rel(cli, config, "Reads")
+  Rel(cli, cloudinit, "Resolves path to")
+  Rel(cli, multipass, "Launches VM and optional mount flow through")
+  Rel(multipass, ubuntu, "Creates")
+  Rel(ubuntu, ci, "Executes")
+  Rel(ci, brew, "Bootstraps and installs tools with")
+  Rel(brew, user, "Provides CLI tools to")
+  Rel(ci, user, "Creates and hardens")
+  Rel(ci, ufw, "Configures")
+----
+
+== Component View
+
+[source,mermaid]
+----
+C4Component
+  title Component Diagram - Host Create Flow MVP
+
+  Container_Boundary(host, "Host Tooling") {
+    Component(cmd, "cmd/devvm", "Go", "CLI entrypoint")
+    Component(cfg, "internal/config", "Go", "Config parsing, path resolution, and validation")
+    Component(flow, "internal/create", "Go", "Coordinates create flow and optional mount steps")
+    Component(mp, "internal/multipass", "Go", "Multipass subprocess wrapper")
+  }
+
+  Container_Boundary(vm, "Guest") {
+    Component(ci, "cloud-init", "Provisioning", "Applies checked-in guest setup")
+  }
+
+  Rel(cmd, flow, "Invokes")
+  Rel(flow, cfg, "Loads config from")
+  Rel(flow, mp, "Runs Multipass commands through")
+  Rel(mp, ci, "Waits for completion of")
+----
+
+== Deployment View
+
+[source,mermaid]
+----
+C4Deployment
+  title Deployment Diagram - Multipass Dev Environment MVP
+
+  Deployment_Node(host_os, "Host OS", "macOS/Linux/Windows") {
+    Deployment_Node(devvm_cli, "devvm CLI", "Go")
+    Deployment_Node(multipassd, "Multipass Daemon", "Multipass") {
+      Deployment_Node(vm_instance, "multipass VM", "qemu/HyperKit/Hyper-V") {
+        Container(ubuntu, "Ubuntu 24.04", "VM", "Kernel-isolated guest")
+      }
+    }
+  }
+
+  Rel(devvm_cli, multipassd, "launch / exec(status) / set / mount")
+----
+
+== Technology Stack
+
+[cols="1,2,3", options="header"]
+|===
+| Category | Technology | Rationale
+
+| Virtualization
+| Multipass
+| Retains the VM boundary for isolated local development workloads
+
+| Host Orchestration
+| Go CLI
+| Keeps the launch workflow small, explicit, and testable
+
+| Base Image
+| Ubuntu 24.04 LTS
+| Stable cloud-init support and current security updates
+
+| Guest Provisioning
+| cloud-init
+| Uses checked-in provisioning files applied during first boot, including pinned Homebrew bootstrap scripts and fixed tool bundles
+
+| Network Firewall
+| UFW
+| Enforces deny-by-default networking inside the guest
+
+| Userland Tooling
+| Homebrew
+| Installs pinned OpenCode and repo-specific Go packages from a pinned `homebrew/core` snapshot
+|===
+
+== Security Architecture
+
+=== Isolation Boundary
+
+The primary security boundary is the Multipass VM. The host CLI may mount one
+explicitly configured project directory into the guest after launch, but does
+not expose broader host paths.
+
+=== Provisioning Boundary
+
+Provisioning is defined by the cloud-init file referenced from `devvm.yaml`
+plus an optional post-boot repo mount declared in that same config. The root
+files are this repository's self-hosting setup, while `templates/` contains the
+copy-and-adapt starter pair for other repos. The CLI does not inject secrets or
+perform general file transfer. The guest package policy is split: Ubuntu `apt`
+installs bootstrap packages from official repositories, then a pinned
+Homebrew-install script and pinned `homebrew/core` snapshot install the
+Homebrew-managed tool bundle.
+
+=== Access Model
+
+The VM is accessed through Multipass-managed guest operations such as
+`multipass shell` and `multipass exec`. The runtime user inside the VM is
+non-root and is not granted sudo access.
+
+=== Network Egress Controls
+
+UFW is configured inside the guest by cloud-init with default-deny inbound and
+outbound policies, plus explicit outbound allows defined in the checked-in
+cloud-init file.
+
+=== Supply-Chain Controls
+
+The Homebrew bootstrap path is pinned rather than floating:
+
+* the installer is downloaded from a checked-in `Homebrew/install` commit URL
+* the installer SHA-256 is verified before execution
+* `homebrew/core` is checked out to a checked-in commit before any tool install
+* `HOMEBREW_NO_AUTO_UPDATE=1` is used during provisioning so formula resolution
+  stays on that pinned snapshot
+
+This keeps the guest aligned with the project's supply-chain constraints while
+still using the officially supported Homebrew Linux prefix.

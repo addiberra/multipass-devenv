@@ -1,0 +1,354 @@
+= Design: Dev Environment Setup
+:version: 6.1.0
+:source-spec-version: 6.1.0
+:status: Current
+:last-updated: 2026-04-02
+:feature: dev-env-setup
+:toc:
+
+== Technical Context
+
+This feature keeps the simplified MVP launch path and optional repo-scoped host
+mount, separates reusable starter artifacts from the repository's own
+self-hosting setup, and now defines an explicit package-manager policy for VM
+provisioning. The repository still centers on checked-in launch inputs, and the
+create flow may attach one explicit project directory after the VM is ready.
+
+The core inputs remain:
+
+* a checked-in `devvm.yaml` machine config
+* a checked-in cloud-init file referenced by that config
+* a thin Go `create` command
+
+This revision makes the artifact roles explicit:
+
+* root `devvm.yaml` plus `opencode-sandbox.repo.yaml` define this repository's
+  own development VM
+* `templates/devvm.template.yaml` plus
+  `templates/opencode-sandbox.template.yaml` provide the reusable starter pair
+
+The prior design removed all host mounts. This revision restores a narrower
+workflow: one optional repo-scoped `multipass mount`, controlled explicitly by
+`devvm.yaml`, with no broader host filesystem sharing.
+
+This revision also splits guest software provisioning into two layers:
+
+* `apt` remains the source of truth for Ubuntu bootstrap and hardening packages
+* Homebrew provides the pinned userland tools that are better supported there
+
+The Homebrew bootstrap itself is pinned to a reviewed `Homebrew/install` commit
+and checksum. Tool installs are resolved from a pinned `homebrew/core` commit so
+the guest does not consume floating package metadata during provisioning.
+
+== Decisions and Constraints
+
+* ADR-0002: Use a Go Create CLI for Config-Driven Multipass Startup (see `docs/adrs/0002-go-create-cli-for-config-driven-multipass-startup.yaml`)
+* ADR-0001: Use Multipass VM for Secure Agentic AI Development Environment (superseded, historical context only)
+
+Relevant constraints from `docs/constraints.yaml`:
+
+* C-001: Only explicitly configured project-scoped host mounts
+* C-002: Network egress restricted to essential ports via UFW
+* C-004: SSH access limited to the path Multipass requires
+* C-005: Non-root user execution
+* C-010: Apt packages from official Ubuntu repositories only
+* C-014: Dependencies pinned to specific versions
+
+No new ADR is needed for this simplification. The MVP keeps the accepted Go CLI
+and Multipass-based architecture, but removes higher-level provisioning scope.
+
+== Research and Unknowns
+
+The existing repository already has the required technical foundation:
+
+* a Go CLI entrypoint in `cmd/devvm`
+* internal packages for config loading and Multipass execution
+* a checked-in cloud-init file that already carries the guest hardening logic
+* a thin Multipass wrapper that can grow by one `set` step and one `mount` step
+
+The simplification mainly removes excess configuration and orchestration.
+
+The provisioning-specific research for this revision produced two decisions:
+
+* OpenCode now has an official `homebrew/core` formula on Linux, so the guest no
+  longer needs a global npm install path for the CLI.
+* The official Homebrew installer is still the supported bootstrap path, but the
+  safest repeatable automation model for this VM is to download a pinned
+  installer revision, verify its checksum, and execute it as the default
+  Multipass `ubuntu` user because the installer refuses direct root execution.
+
+No unresolved unknowns remain for this revision. The project accepts the trade-
+off that a mounted repo is writable by the VM because the desired workflow is a
+single trusted project directory, not a full sandbox with zero host sharing.
+
+== System Design
+
+=== Component Interaction
+
+[source,mermaid]
+----
+flowchart LR
+    subgraph Host["Host Machine"]
+        CFG[devvm.yaml]
+        CLI[devvm create]
+        CI[cloud-init file]
+        TPL[templates/]
+    end
+
+    subgraph MP["Multipass"]
+        LAUNCH[multipass launch]
+        STATUS[multipass exec cloud-init status --wait]
+        SET[multipass set local.privileged-mounts]
+        MOUNT[multipass mount]
+    end
+
+    subgraph VM["Guest VM"]
+        GUEST[Ubuntu VM]
+        BOOT[cloud-init boot setup]
+        APT[apt bootstrap]
+        BREW[Homebrew tool layer]
+    end
+
+    CFG --> CLI
+    CI --> CLI
+    TPL --> CLI
+    CLI --> LAUNCH
+    LAUNCH --> GUEST
+    GUEST --> BOOT
+    CLI --> STATUS
+    CLI --> SET
+    SET --> MOUNT
+    BOOT --> APT
+    APT --> BREW
+----
+
+=== Create Flow
+
+[source,mermaid]
+----
+sequenceDiagram
+    actor User
+    participant CLI as devvm create
+    participant MP as Multipass
+    participant VM as Guest VM
+
+    User->>CLI: create
+    CLI->>CLI: Load devvm.yaml
+    CLI->>CLI: Validate instance values and cloud-init path
+    CLI->>MP: multipass launch --cloud-init <file>
+    MP->>VM: Start guest
+    VM->>VM: Apply checked-in cloud-init
+    CLI->>MP: multipass exec cloud-init status --wait
+    CLI->>MP: multipass set local.privileged-mounts <bool> (optional)
+    CLI->>MP: multipass mount <host> <instance>:<guest> (optional)
+    CLI-->>User: Ready message with VM name
+----
+
+=== Host Components
+
+==== `devvm.yaml`
+
+`devvm.yaml` is the runnable project configuration file. In this repository it
+is the self-hosting config, but the same schema also backs the reusable starter
+file in `templates/devvm.template.yaml`. It defines the values needed to launch
+a VM and, optionally, one repo-scoped mount:
+
+* instance name, or omission to trigger name derivation
+* CPU, memory, disk, and Ubuntu release
+* path to the checked-in cloud-init file
+* optional host path, guest path, and privileged mount setting for one repo
+
+Relative paths are resolved from the config file directory.
+
+==== Create CLI
+
+The Go CLI stays intentionally thin. It is responsible for:
+
+* loading and validating `devvm.yaml`
+* resolving the cloud-init path
+* resolving and validating the optional host mount path
+* deriving a fallback instance name from the working directory
+* calling `multipass launch` with the configured machine values
+* waiting for `cloud-init status --wait`
+* optionally configuring `local.privileged-mounts`
+* optionally mounting one host repo into the guest
+* reporting success or failure
+
+The command surface remains one operation: `create`.
+
+==== Multipass Adapter
+
+The Multipass wrapper exposes only the operations required by the current
+workflow:
+
+* launch a fresh VM with sizing, release, and cloud-init path
+* wait for cloud-init completion inside the launched VM
+* set the local privileged mount policy
+* mount one host path into the launched VM
+
+It still does not implement file transfer, arbitrary post-boot execution, or
+clone workflows.
+
+=== Guest Components
+
+==== Checked-In Cloud-Init
+
+The checked-in cloud-init file remains the guest provisioning contract for the
+runtime posture required by the spec:
+
+* creating the non-root guest user
+* denying sudo access for that user
+* allowing only the SSH path Multipass requires for guest operations
+* configuring UFW with default deny policies and explicit outbound allow rules
+* installing Ubuntu bootstrap packages from official repositories
+* bootstrapping Homebrew from a pinned installer revision and checksum
+* checking out a pinned `homebrew/core` snapshot before any tool install
+* installing the fixed Homebrew tool bundle for the selected VM role
+
+The CLI treats this file as an opaque launch input. The CLI validates that the
+path exists and passes it to Multipass unchanged.
+
+For this split, the repository now ships two cloud-init roles:
+
+* `opencode-sandbox.repo.yaml` for working on `multipass-devenv` itself
+* `templates/opencode-sandbox.template.yaml` as the reusable starter baseline
+
+The template file stays generic, while the repo-specific file may set a repo-
+specific workspace path and onboarding text.
+
+==== Package Policy
+
+The provisioning contract now encodes a package-manager split rather than
+installing everything from one source:
+
+* `apt` installs base guest packages that are part of the Ubuntu runtime and the
+  prerequisites Homebrew requires on Linux (`build-essential`, `procps`, `curl`,
+  `file`, `git`) plus the guest hardening utilities already used by this repo.
+* Homebrew installs userland developer tools that are better supported there.
+
+The Homebrew bootstrap path is intentionally static and auditable:
+
+* download `Homebrew/install` from a checked-in commit URL
+* verify the installer SHA-256 before execution
+* execute the installer as the default `ubuntu` user with
+  `HOMEBREW_NO_INSTALL_FROM_API=1`
+* check out `homebrew/core` to a checked-in commit before any tool install
+* run all `brew install` commands with `HOMEBREW_NO_AUTO_UPDATE=1`
+
+This preserves C-010 for Ubuntu packages and C-014 for Homebrew-managed tools
+without introducing a custom package manager or unsupported Homebrew prefix.
+
+==== Fixed Tool Bundles
+
+The two checked-in cloud-init roles now diverge in their Homebrew package sets:
+
+* `opencode-sandbox.repo.yaml` installs pinned OpenCode and Go because this
+  repository is itself a Go project and the repo VM is meant to build it.
+* `templates/opencode-sandbox.template.yaml` installs pinned OpenCode only so
+  the starter artifact stays generic.
+
+==== Optional Repo Mount
+
+When `devvm.yaml` includes a `mount` section, the create flow performs one
+additional host-side workflow after `cloud-init` completes:
+
+* validate that the host path exists and is a directory
+* validate that the guest path is absolute
+* set `local.privileged-mounts` to the declared boolean value
+* call `multipass mount <host> <instance>:<guest>`
+
+The mount remains intentionally narrow: one explicit project directory. The
+design does not support mounting the home directory, mounting multiple paths, or
+implicit host sharing.
+
+=== Failure Handling
+
+The create flow stops on the first failure that would otherwise create an
+invalid or misleading environment.
+
+Failure classes:
+
+* missing or unreadable `devvm.yaml`
+* invalid config values
+* missing or unreadable cloud-init file
+* Multipass launch failure
+* cloud-init completion failure
+* invalid mount configuration
+* privileged mount setting failure
+* mount command failure
+
+Post-launch failures are surfaced with the instance name so the developer can
+inspect or delete the VM manually.
+
+== Requirement Resolution
+
+=== US-001: Create Environment from Project Config
+
+Components:: `devvm.yaml`, `internal/config`, `internal/create`, `internal/multipass`
+Requirements::
+* DEV-001: The CLI reads machine settings from `devvm.yaml` and passes them to Multipass launch.
+* DEV-002: Config loading fails fast when `devvm.yaml` is missing or unreadable.
+* DEV-003: Validation rejects invalid config fields before launch.
+* DEV-004: The config loader derives a valid fallback instance name from the working directory.
+
+=== US-002: Launch with a Checked-In Cloud-Init File
+
+Components:: `devvm.yaml`, `internal/config`, `internal/create`, `internal/multipass`
+Requirements::
+* DEV-005: The create flow launches a fresh VM from the configured Ubuntu release and cloud-init file.
+* DEV-006: Missing cloud-init input or launch failure is reported as a create failure.
+
+=== US-003: Ship Reusable OpenCode Multipass Templates
+
+Components:: `templates/devvm.template.yaml`, `templates/opencode-sandbox.template.yaml`, `README.md`
+Requirements::
+* DEV-007: The repository includes a reusable starter `devvm` config and cloud-init file under `templates/`.
+* DEV-008: The starter config references the starter cloud-init file with a portable relative path.
+* DEV-009: The starter cloud-init stays generic rather than embedding repo-specific workspace or mount details.
+
+=== US-004: Preserve Secure Runtime Defaults
+
+Components:: checked-in cloud-init file, `internal/create`, `internal/multipass`
+Requirements::
+* DEV-010: The checked-in cloud-init file creates a non-root guest runtime.
+* DEV-011: The checked-in cloud-init file leaves the guest user without administrative privileges.
+* DEV-012: The checked-in cloud-init file sets deny-by-default firewall policies.
+* DEV-013: The checked-in cloud-init file defines the allowed outbound ports.
+* DEV-014: The checked-in cloud-init file allows only the SSH access Multipass requires while keeping broader guest exposure denied by default.
+
+=== US-005: Attach a Repo-Scoped Host Mount
+
+Components:: `devvm.yaml`, `schemas/devvm.schema.json`, `internal/config`, `internal/create`, `internal/multipass`
+Requirements::
+* DEV-015: The config contract optionally declares one mount and the loader validates the host path, guest path, and privileged flag before mount execution.
+* DEV-016: After guest readiness, the create flow sets `local.privileged-mounts` and mounts the configured host directory into the configured guest path.
+* DEV-017: Mount-setting or mount-command failures surface as create failures and do not report success.
+
+=== US-006: Provision Pinned Tooling with Apt and Homebrew
+
+Components:: `opencode-sandbox.repo.yaml`, `templates/opencode-sandbox.template.yaml`, guest provisioning scripts
+Requirements::
+* DEV-018: The checked-in cloud-init files use Ubuntu repositories for bootstrap packages before provisioning Homebrew-managed tools.
+* DEV-019: The Homebrew bootstrap path downloads the official installer from a pinned commit and verifies the installer checksum before execution.
+* DEV-020: The Homebrew tool install path checks out a pinned `homebrew/core` snapshot and disables automatic Homebrew updates during provisioning.
+* DEV-021: The repo-specific cloud-init file installs pinned OpenCode and Go packages from the pinned Homebrew snapshot.
+* DEV-022: The reusable starter cloud-init file installs pinned OpenCode only and excludes the repo-specific Go toolchain bundle.
+
+== File Structure
+
+[source]
+----
+multipass-devenv/
+├── cmd/
+│   └── devvm/
+│       └── main.go
+├── internal/
+│   ├── config/
+│   ├── create/
+│   └── multipass/
+├── opencode-sandbox.repo.yaml
+├── templates/
+│   ├── devvm.template.yaml
+│   └── opencode-sandbox.template.yaml
+└── devvm.yaml
+----

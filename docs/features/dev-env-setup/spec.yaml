@@ -1,0 +1,322 @@
+# yaml-language-server: $schema=../../../.agents/skills/needs-features/schemas/feature-spec.schema.json
+
+schema_version: "1.0.0"
+feature: dev-env-setup
+prefix: DEV
+version: "6.1.0"
+last_updated: "2026-04-02"
+
+constraint_notes:
+  - constraint: "The system SHALL mount only explicitly configured project-scoped host directories into the VM."
+    category: Security
+    note: >-
+      C-001 allows only one explicit project-scoped host mount. The create flow
+      validates the configured host path instead of exposing broader host
+      directories.
+
+  - constraint: "The system SHALL restrict network egress to essential ports via UFW."
+    category: Security
+    note: >-
+      C-002 remains enforced by the checked-in cloud-init file rather than by
+      dynamic CLI-generated firewall rules.
+
+  - constraint: "The system SHALL permit only the SSH access required for Multipass-managed guest operations."
+    category: Security
+    note: >-
+      C-004 is satisfied by the checked-in cloud-init firewall rules that keep
+      inbound traffic denied by default while allowing the SSH path Multipass
+      needs for guest operations.
+
+  - constraint: "The system SHALL run OpenCode as a non-root user."
+    category: Security
+    note: >-
+      C-005 is satisfied by the guest setup baked into the checked-in cloud-init
+      file.
+
+  - constraint: "All apt packages SHALL be installed from official Ubuntu repositories only."
+    category: Supply Chain
+    note: >-
+      C-010 applies to the checked-in cloud-init bootstrap package set. The VM
+      uses Ubuntu repositories for base guest packages before provisioning any
+      Homebrew-managed tools.
+
+  - constraint: "All dependencies SHALL be pinned to specific versions, never using 'latest' tag or floating version specifiers."
+    category: Supply Chain
+    note: >-
+      C-014 applies to the Homebrew bootstrap path. The provisioning flow pins
+      the Homebrew installer by commit and checksum, then installs tools from a
+      pinned `homebrew/core` snapshot instead of floating package metadata.
+
+stories:
+  - id: US-001
+    title: Create Environment from Project Config
+    narrative:
+      as_a: developer
+      i_want: to create a Multipass VM from a checked-in machine config file
+      so_that: I can start the environment with one repeatable command
+    requirements:
+      - id: DEV-001
+        text: >-
+          When the developer runs the create command in a directory containing
+          `devvm.yaml`, the system shall create a Multipass VM using the machine
+          values defined in that file.
+        ears_type: event-driven
+        verification: >-
+          Place a valid `devvm.yaml` in a test directory and run the create
+          command there. Confirm that a new VM is created and that its name,
+          CPU count, memory, disk, and Ubuntu release match the configuration.
+
+      - id: DEV-002
+        text: >-
+          If `devvm.yaml` is missing or unreadable, then the system shall
+          display an error and abort before creating a VM.
+        ears_type: unwanted-behavior
+        verification: >-
+          Run the create command in a directory without `devvm.yaml`, then
+          repeat with unreadable permissions on the file. Confirm the command
+          fails with an error and `multipass list` shows no new VM.
+
+      - id: DEV-003
+        text: >-
+          If `devvm.yaml` does not conform to the supported schema, then the
+          system shall identify the invalid field and abort before creating a VM.
+        ears_type: unwanted-behavior
+        verification: >-
+          Set an invalid value such as `instance.cpus: 0` in `devvm.yaml` and
+          run the create command. Confirm the command fails with a validation
+          error that identifies the invalid field and no VM is created.
+
+      - id: DEV-004
+        text: >-
+          If `instance.name` is omitted from `devvm.yaml`, then the system shall
+          generate a valid Multipass instance name derived from the current
+          working directory name.
+        ears_type: unwanted-behavior
+        verification: >-
+          Remove `instance.name` from a valid config and run the create command.
+          Confirm the VM is created successfully and the reported VM name is a
+          valid Multipass instance name derived from the working directory name.
+
+  - id: US-002
+    title: Launch with a Checked-In Cloud-Init File
+    narrative:
+      as_a: developer
+      i_want: the create command to use a checked-in cloud-init file
+      so_that: the first MVP stays simple and easy to inspect
+    requirements:
+      - id: DEV-005
+        text: >-
+          When the developer runs the create command, the system shall launch a
+          fresh Ubuntu VM using `instance.ubuntu_release` and the cloud-init
+          file referenced by `devvm.yaml`.
+        ears_type: event-driven
+        verification: >-
+          Run the create command with a valid config and confirm the VM is
+          launched from the configured Ubuntu release and that Multipass
+          receives the configured cloud-init file path.
+
+      - id: DEV-006
+        text: >-
+          If the configured cloud-init file is missing, unreadable, or the VM
+          launch fails, then the system shall display an error and abort the
+          create command.
+        ears_type: unwanted-behavior
+        verification: >-
+          Configure an invalid cloud-init path or otherwise cause launch to fail,
+          run the create command, and confirm the command reports the failure
+          instead of continuing.
+
+  - id: US-003
+    title: Ship Reusable OpenCode Multipass Templates
+    narrative:
+      as_a: developer
+      i_want: reusable starter config and cloud-init files in this repository
+      so_that: I can copy the workflow into another repo without reverse-engineering the self-hosting setup
+    requirements:
+      - id: DEV-007
+        text: >-
+          The system shall include a reusable starter `devvm` config and a
+          reusable starter cloud-init file under `templates/`.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect the repository and confirm `templates/devvm.template.yaml` and
+          `templates/opencode-sandbox.template.yaml` both exist.
+
+      - id: DEV-008
+        text: >-
+          The reusable starter `devvm` config shall reference the reusable
+          starter cloud-init file using a relative path that keeps the pair
+          portable when copied together.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect `templates/devvm.template.yaml` and confirm its `cloud_init`
+          value points to `./opencode-sandbox.template.yaml`.
+
+      - id: DEV-009
+        text: >-
+          The reusable starter cloud-init file shall define a generic OpenCode
+          agent workflow rather than repository-specific mount or workspace
+          details.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect `templates/opencode-sandbox.template.yaml` and confirm it uses
+          a generic workspace path and template-oriented comments instead of
+          repo-specific paths.
+
+  - id: US-004
+    title: Preserve Secure Runtime Defaults
+    narrative:
+      as_a: developer
+      i_want: the created environment to keep the same secure runtime posture
+      so_that: the MVP remains simple without weakening the isolation model
+    requirements:
+      - id: DEV-010
+        text: >-
+          The system shall create the guest runtime as the non-root user defined
+          by the checked-in cloud-init file.
+        ears_type: ubiquitous
+        verification: >-
+          After the VM is created, enter it and run `whoami`. Confirm the
+          active user matches the configured guest user and is not `root`.
+
+      - id: DEV-011
+        text: >-
+          When guest setup completes, the system shall ensure the guest user
+          cannot execute commands with administrative privileges.
+        ears_type: event-driven
+        verification: >-
+          After the VM is created, enter it as the guest user and run
+          `sudo -n true`. Confirm the command fails.
+
+      - id: DEV-012
+        text: >-
+          The system shall configure the guest firewall to deny inbound and
+          outbound traffic by default.
+        ears_type: ubiquitous
+        verification: >-
+          After the VM is created, inspect the guest firewall configuration and
+          confirm both inbound and outbound default policies are deny.
+
+      - id: DEV-013
+        text: >-
+          The system shall allow outbound network connections only on the ports
+          defined in the checked-in cloud-init file.
+        ears_type: ubiquitous
+        verification: >-
+          Run the create command and confirm the guest firewall contains allow
+          rules for only the outbound ports declared in the cloud-init file.
+
+      - id: DEV-014
+        text: >-
+          The system shall allow only the guest SSH access required for
+          Multipass-managed operations.
+        ears_type: ubiquitous
+        verification: >-
+          Run the create command and confirm UFW permits inbound TCP port 22
+          while the VM remains accessible via `multipass exec` and
+          `multipass shell`.
+
+  - id: US-005
+    title: Attach a Repo-Scoped Host Mount
+    narrative:
+      as_a: developer
+      i_want: to optionally declare one host repo mount in `devvm.yaml`
+      so_that: the VM can work directly in that repo without broader host access
+    requirements:
+      - id: DEV-015
+        text: >-
+          Where a `mount` section is present in `devvm.yaml`, the system shall
+          validate the configured host path, guest path, and privileged mount
+          setting before starting the mount workflow.
+        ears_type: optional-feature
+        verification: >-
+          Add a valid `mount` section to `devvm.yaml` and run the create
+          command. Confirm the command accepts the config. Then try an invalid
+          host path and a non-absolute guest path and confirm the command fails
+          before the mount workflow begins.
+
+      - id: DEV-016
+        text: >-
+          Where a `mount` section is present in `devvm.yaml`, when guest setup
+          completes, the system shall configure `local.privileged-mounts` to the
+          declared value before mounting the configured host path into the guest
+          path.
+        ears_type: complex
+        verification: >-
+          Add a `mount` section with `privileged: true`, run the create command,
+          and confirm the command configures the Multipass setting before the
+          mount succeeds. Repeat with `privileged: false` and confirm the
+          setting changes accordingly.
+
+      - id: DEV-017
+        text: >-
+          If the configured mount operation fails, then the system shall display
+          the failure and stop without reporting the environment as ready.
+        ears_type: unwanted-behavior
+        verification: >-
+          Configure a mount that Multipass cannot complete, run the create
+          command, and confirm the command exits with the mount error and does
+          not print the ready instructions.
+
+  - id: US-006
+    title: Provision Pinned Tooling with Apt and Homebrew
+    narrative:
+      as_a: developer
+      i_want: the checked-in cloud-init files to use the safest supported package source for each tool
+      so_that: the VM stays auditable and repeatable without falling back to npm-based global installs
+    requirements:
+      - id: DEV-018
+        text: >-
+          The checked-in cloud-init files shall install guest bootstrap packages
+          from official Ubuntu repositories before provisioning Homebrew-managed
+          tools.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect the checked-in cloud-init files and confirm their base package
+          lists are satisfied by Ubuntu repositories. After VM creation, confirm
+          the bootstrap packages are present before the Homebrew tool install
+          step runs.
+
+      - id: DEV-019
+        text: >-
+          When guest provisioning bootstraps Homebrew, the system shall download
+          the official Homebrew installer from a checked-in commit revision and
+          verify the install script checksum before executing it.
+        ears_type: event-driven
+        verification: >-
+          Inspect the checked-in cloud-init installer script and confirm it uses
+          an explicit installer commit URL plus a matching checksum verification
+          step before Homebrew installation proceeds.
+
+      - id: DEV-020
+        text: >-
+          When guest provisioning installs Homebrew-managed tools, the system
+          shall resolve formulae from a checked-in `homebrew/core` snapshot and
+          disable automatic Homebrew updates during provisioning.
+        ears_type: event-driven
+        verification: >-
+          Inspect the checked-in cloud-init installer script and confirm it
+          checks out a pinned `homebrew/core` commit before any `brew install`
+          step and sets Homebrew to avoid auto-updating during provisioning.
+
+      - id: DEV-021
+        text: >-
+          The repository-specific cloud-init file shall install pinned OpenCode
+          and Go toolchain packages from the pinned Homebrew snapshot.
+        ears_type: ubiquitous
+        verification: >-
+          Create the repo-specific VM and confirm `brew list --versions`
+          reports the pinned OpenCode and Go versions declared by the checked-in
+          cloud-init file.
+
+      - id: DEV-022
+        text: >-
+          The reusable starter cloud-init file shall install pinned OpenCode
+          from the pinned Homebrew snapshot and shall not install repo-specific
+          Go tooling.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect the reusable starter cloud-init file and confirm its
+          Homebrew-managed package list includes OpenCode only. Then create a VM
+          from the starter artifacts and confirm OpenCode is installed while Go
+          is absent.

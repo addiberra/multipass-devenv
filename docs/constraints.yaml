@@ -1,0 +1,174 @@
+# yaml-language-server: $schema=../.agents/skills/proven-needs/schemas/constraints.schema.json
+
+schema_version: "1.0.0"
+version: "2.0.0"
+last_updated: "2026-04-02"
+
+categories:
+  - name: Security
+    constraints:
+      - id: C-001
+        text: >-
+          The system SHALL mount only explicitly configured project-scoped host
+          directories into the VM.
+        rationale: >-
+          Repo-scoped mounts are allowed for local development workflows, but
+          broad host filesystem exposure is still disallowed. Restricting mounts
+          to explicit project directories preserves the VM boundary for the rest
+          of the host and works with C-008, which still forbids exposing host
+          credentials to the VM.
+        added: "2026-03-25"
+
+      - id: C-002
+        text: >-
+          The system SHALL restrict network egress to essential ports via UFW.
+        rationale: >-
+          Port-level default-deny policy via UFW limits exfiltration and
+          remote shell establishment by compromised agents. Outbound traffic
+          is allowed only on ports 443 (HTTPS), 22 (SSH), 53 (DNS), and 853
+          (DNS-over-TLS).
+        added: "2026-03-28"
+
+      - id: C-003
+        text: >-
+          The system SHALL inject secrets into the VM through scoped
+          provisioning files, not environment variables or host mounts.
+        rationale: >-
+          Environment variables are visible to all processes in the VM.
+          Scoped provisioning files delivered during VM setup keep secrets
+          out of the host environment and limit exposure to only the files
+          needed inside the guest. This follows NVIDIA's secret injection
+          guidance while allowing either launch-time cloud-init delivery or
+          controlled post-boot transfer.
+        added: "2026-03-25"
+
+      - id: C-004
+        text: >-
+          The system SHALL permit only the SSH access required for
+          Multipass-managed guest operations.
+        rationale: >-
+          Multipass relies on guest SSH for launch-time readiness checks and
+          host-managed operations such as exec, transfer, and shell. Allowing
+          only that path keeps the workflow functional while avoiding broader
+          guest exposure through host mounts or extra provisioning channels.
+        added: "2026-03-25"
+
+      - id: C-005
+        text: >-
+          The system SHALL run OpenCode as a non-root user.
+        rationale: >-
+          Running agents as non-root limits the damage from compromised
+          code execution. Root access would increase the blast radius inside
+          the guest and weaken the intended isolation model.
+        added: "2026-03-25"
+
+      - id: C-006
+        text: >-
+          The system SHALL leave VM lifecycle management to the developer.
+        rationale: >-
+          This project provisions isolated VMs but does not enforce session
+          teardown in-product. Cleanup remains an operational choice outside
+          the launch workflow.
+        added: "2026-03-25"
+
+  - name: Isolation
+    constraints:
+      - id: C-007
+        text: >-
+          The system SHALL prevent file writes outside /home/opencode/workspace.
+        rationale: >-
+          Restricting write operations to the workspace prevents modification
+          of system files, user dotfiles, and configuration that could
+          establish persistence or escape the sandbox.
+        added: "2026-03-25"
+
+      - id: C-008
+        text: >-
+          The system SHALL NOT expose host credentials to the VM.
+        rationale: >-
+          Host credentials (SSH keys, API tokens in ~/.config) are not
+          needed inside the VM. Scoping credentials to only what's
+          required for the session limits blast radius.
+        added: "2026-03-25"
+
+      - id: C-009
+        text: >-
+          The system SHALL rely on VM isolation rather than in-guest
+          filesystem confinement.
+        rationale: >-
+          Multipass VM isolation is the primary security boundary for this
+          project. The implementation intentionally avoids additional
+          filesystem MAC policy inside the guest.
+        added: "2026-03-25"
+
+  - name: Supply Chain
+    constraints:
+      - id: C-010
+        text: >-
+          All apt packages SHALL be installed from official Ubuntu
+          repositories only.
+        rationale: >-
+          Official Ubuntu repositories are signed and verified. Adding
+          third-party PPAs introduces untrusted code paths and increases
+          supply chain attack surface.
+        added: "2026-03-25"
+
+      - id: C-011
+        text: >-
+          All Python packages SHALL be installed with hash verification
+          or from verified requirement files.
+        rationale: >-
+          pip install without hash verification allows MITM attacks
+          that could inject malicious code. Hash-pinned requirements
+          provide cryptographic integrity verification.
+        added: "2026-03-25"
+
+      - id: C-012
+        text: >-
+          All npm packages SHALL be installed with integrity verification.
+        rationale: >-
+          npm package integrity verification (package-lock.json with
+          integrity hashes) ensures packages haven't been tampered
+          with in transit or at rest on the registry.
+        added: "2026-03-25"
+
+      - id: C-013
+        text: >-
+          OpenCode CLI SHALL be downloaded from official source only
+          with checksum verification.
+        rationale: >-
+          Installing OpenCode from unofficial sources or without
+          checksum verification allows attackers to substitute
+          malicious binaries. Checksum verification ensures authenticity.
+        added: "2026-03-25"
+
+      - id: C-014
+        text: >-
+          All dependencies SHALL be pinned to specific versions,
+          never using 'latest' tag or floating version specifiers.
+        rationale: >-
+          Floating versions introduce non-determinism and allow
+          supply chain attacks when dependencies are compromised.
+          Pinned versions ensure reproducible builds and allow
+          vulnerability auditing.
+        added: "2026-03-25"
+
+      - id: C-015
+        text: >-
+          Git clone operations SHALL verify SSH host keys or HTTPS
+          certificates.
+        rationale: >-
+          Unverified git clones are vulnerable to MITM attacks that
+          could inject malicious code. Pre-seeding SSH host keys
+          and enforcing HTTPS certificate verification prevents this.
+        added: "2026-03-25"
+
+      - id: C-016
+        text: >-
+          Python dependencies SHALL be scanned for known vulnerabilities
+          using pip-audit or similar tools.
+        rationale: >-
+          Known vulnerabilities in dependencies are a common attack
+          vector. Automated scanning during VM setup catches issues
+          before they can be exploited.
+        added: "2026-03-25"

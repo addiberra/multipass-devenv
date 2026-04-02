@@ -1,0 +1,128 @@
+= State Transition Log
+:last-updated: 2026-04-02
+
+== TRANSITION-009
+:date: 2026-04-02
+:intent: Adopt a pinned Homebrew provisioning policy for OpenCode workflows while keeping apt for guest bootstrap packages
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: The checked-in cloud-init files bootstrap Homebrew from a pinned official installer and pinned homebrew/core snapshot, install fixed OpenCode tool bundles, and document the apt-versus-Homebrew package policy for repo and template VMs
+:prior-state: The repo-specific VM installs OpenCode from npm, the template relies on apt-only packages, and the provisioning docs do not define when to prefer apt versus Homebrew
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v6.1.0), docs/features/dev-env-setup/design.adoc (v6.1.0), docs/features/dev-env-setup/tasks.yaml (v7.1.0), docs/architecture.adoc (v6.1.0), docs/state-log.adoc, README.md, opencode-sandbox.repo.yaml, templates/opencode-sandbox.template.yaml
+
+== TRANSITION-008
+:date: 2026-04-02
+:intent: Separate reusable Multipass templates from this repository's self-hosting dev VM setup
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: The repository ships reusable `templates/` artifacts for OpenCode-based Multipass workflows while the root `devvm.yaml` and referenced cloud-init remain specific to developing this repo inside Multipass
+:prior-state: The root `devvm.yaml` and `opencode-sandbox.yaml` simultaneously served as the product example and this repository's own runnable setup
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v6.0.0), docs/features/dev-env-setup/design.adoc (v6.0.0), docs/features/dev-env-setup/tasks.yaml (v7.0.0), docs/architecture.adoc (v6.0.0), docs/state-log.adoc, README.md, devvm.yaml, opencode-sandbox.repo.yaml, opencode-sandbox.yaml (deleted), templates/devvm.template.yaml, templates/opencode-sandbox.template.yaml
+
+== TRANSITION-007
+:date: 2026-04-02
+:intent: Support an optional repo-scoped Multipass mount with configurable privileged mount behavior
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: The project supports an optional `mount` section in `devvm.yaml` so the create flow can enable or disable `local.privileged-mounts` and mount one explicit host repo into the VM after launch
+:prior-state: The project forbids host directory mounts and the CLI only launches a VM from checked-in inputs with no post-boot mount workflow
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/constraints.yaml (v2.0.0), docs/features/dev-env-setup/spec.yaml (v5.0.0), docs/features/dev-env-setup/design.adoc (v5.0.0), docs/features/dev-env-setup/tasks.yaml (v6.0.0), docs/architecture.adoc (v5.0.0), docs/state-log.adoc, README.md, devvm.yaml, schemas/devvm.schema.json, internal/config/config.go, internal/config/config_test.go, internal/create/create.go, internal/multipass/multipass.go
+
+== TRANSITION-006
+:date: 2026-04-01
+:intent: Simplify the repository to an MVP with one cloud-init file, one machine config file, and one create CLI
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (simplified)
+:desired-state: The repository centers on a static cloud-init file, a minimal `devvm.yaml` machine config, and a thin Go `create` command that launches a Multipass VM from those inputs
+:prior-state: The repository includes broader provisioning, secrets, repo bootstrap, and documentation for a larger setup workflow than the MVP requires
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v4.0.0), docs/features/dev-env-setup/design.adoc (v4.0.0), docs/features/dev-env-setup/tasks.yaml (v5.0.0), docs/architecture.adoc (v4.0.0), docs/state-log.adoc, devvm.yaml, schemas/devvm.schema.json, README.md, cmd/devvm/main.go, internal/config/config.go, internal/config/config_test.go, internal/create/create.go, internal/multipass/multipass.go, opencode-sandbox.yaml, internal/provisioning/provisioning.go (deleted), internal/provisioning/known_hosts (deleted), cloud-init/base.yaml (deleted), templates/opencode-config.yaml.j2 (deleted), secrets.env.example (deleted), opencode-checksum.sh (deleted)
+
+== TRANSITION-005
+:date: 2026-03-31
+:intent: Replace the launch script with a Go create CLI driven by a project config schema
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: A single Go `create` command reads `devvm.yaml`, launches or clones a Multipass VM, transfers scoped setup files post-boot, and provisions the guest without a flag-driven Bash entrypoint
+:prior-state: `scripts/launch.sh` reads flags, renders cloud-init dynamically, injects secrets via cloud-init write_files, and performs launch-time orchestration in Bash
+:capabilities-planned: needs-adr, needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked:
+:constraints-checked:
+:result: Failed
+:artifacts-modified:
+
+== TRANSITION-004
+:date: 2026-03-28
+:intent: Simplify network filtering — replace domain-level iptables with basic UFW port rules
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (simplified)
+:desired-state: Network egress controlled by simple UFW port-level rules (allow 443, 22, 53) instead of domain-resolution iptables
+:prior-state: Domain-level egress filtering via iptables with per-IP rules resolved at launch time, configurable whitelist YAML, DNS restriction
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v2.0.0), docs/features/dev-env-setup/design.adoc (v2.0.0), docs/features/dev-env-setup/tasks.yaml (v3.0.0), docs/constraints.yaml (v1.0.0), docs/architecture.adoc (v2.0.0), cloud-init/security.yaml, cloud-init/base.yaml, scripts/launch.sh, README.md, config/network-whitelist.default.yaml (deleted)
+
+== TRANSITION-003
+:date: 2026-03-27
+:intent: Resolve review findings — enforce domain-level egress filtering, remove sudo, consume DNS config from whitelist, eliminate cloud-init duplication, fix constraint references, add shellcheck, clean up teardown references
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: Egress whitelist enforced at domain level via DNS resolution, opencode user has no sudo, DNS servers read from whitelist config, launch.sh reads actual YAML files instead of duplicating them, constraint cross-references are consistent, shellcheck validation exists, no stale teardown references remain
+:prior-state: Port-level egress only (any 22/443 destination reachable), opencode has NOPASSWD sudo, DNS hardcoded, generate_cloud_init duplicates security.yaml, inconsistent constraint refs
+:capabilities-planned: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:capabilities-invoked: needs-features, needs-design, needs-tasks, needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass), Network (pass)
+:result: Achieved
+:artifacts-modified: docs/features/dev-env-setup/spec.yaml (v1.2.0), docs/features/dev-env-setup/design.adoc (v1.2.0), docs/features/dev-env-setup/tasks.yaml (v2.0.0), docs/architecture.adoc (v1.2.0), cloud-init/security.yaml, cloud-init/base.yaml, scripts/launch.sh, scripts/inject-secrets.sh, scripts/validate.sh (new)
+
+== TRANSITION-002
+:date: 2026-03-27
+:intent: Simplify the dev environment by removing AppArmor and the teardown script
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (extended)
+:desired-state: The project relies on Multipass VM isolation without AppArmor or a project-managed teardown workflow
+:prior-state: AppArmor-based filesystem confinement and teardown script were part of the documented and implemented model
+:capabilities-planned: needs-implementation, needs-architecture
+:capabilities-invoked: needs-implementation, needs-architecture
+:constraints-checked: Security (pass), Isolation (pass), Supply Chain (pass), Network (pass)
+:result: Achieved
+:artifacts-modified: docs/constraints.yaml, docs/adrs/0001-multipass-sandbox.yaml, docs/architecture.adoc, docs/features/dev-env-setup/spec.yaml, docs/features/dev-env-setup/design.adoc, docs/features/dev-env-setup/tasks.yaml, docs/state-log.adoc, cloud-init/base.yaml, cloud-init/security.yaml, scripts/launch.sh, README.md
+
+== TRANSITION-001
+:date: 2026-03-25
+:intent: Create secure Multipass dev environment config for agentic AI coding
+:type: Feature evolution
+:risk: High
+:features: dev-env-setup (new)
+:desired-state: Secure, ephemeral Multipass VM with OpenCode CLI, network whitelist, and supply-chain security controls
+:prior-state: Empty greenfield project
+:capabilities-planned: needs-adr, needs-architecture, needs-features, needs-design, needs-tasks, needs-implementation
+:capabilities-invoked: needs-adr, needs-architecture, needs-features, needs-design, needs-tasks, needs-implementation
+:constraints-checked: Security (19 constraints pass), Supply Chain (7 constraints pass)
+:result: Achieved
+:artifacts-modified: docs/adrs/0001-multipass-sandbox.yaml, docs/adrs/index.yaml, docs/constraints.yaml, docs/architecture.adoc, docs/features/dev-env-setup/spec.yaml, docs/features/dev-env-setup/design.adoc, docs/features/dev-env-setup/tasks.yaml, docs/state-log.adoc, config/network-whitelist.default.yaml, cloud-init/base.yaml, cloud-init/security.yaml, cloud-init/apparmor-profile, scripts/launch.sh, scripts/teardown.sh, scripts/inject-secrets.sh, templates/opencode-config.yaml.j2, templates/requirements.pinned.txt.j2, README.md

@@ -1,0 +1,64 @@
+# yaml-language-server: $schema=../../../.agents/skills/needs-tasks/schemas/tasks.schema.json
+
+schema_version: "3.0.0"
+feature: dev-env-setup
+version: "7.1.0"
+status: Implemented
+source_design_version: "6.1.0"
+source_spec_version: "6.1.0"
+last_updated: "2026-04-02"
+
+overview: >-
+  Add a pinned Homebrew provisioning layer to the repo-specific and reusable
+  cloud-init files while keeping Ubuntu apt for bootstrap packages. The work
+  updates the checked-in guest setup, then refreshes docs and architecture to
+  describe the new package-manager policy.
+
+tasks:
+  - id: TASK-001
+    title: Add pinned Homebrew bootstrap to the reusable template VM
+    depends_on: []
+    components: [templates/opencode-sandbox.template.yaml]
+    stories: [US-003, US-004, US-006]
+    requirements: [DEV-007, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-018, DEV-019, DEV-020, DEV-022]
+    done: true
+    description: >-
+      Update the reusable cloud-init template to install Ubuntu bootstrap
+      packages from official repositories, bootstrap Homebrew from a pinned
+      installer and core snapshot, and install the pinned OpenCode bundle only.
+
+  - id: TASK-002
+    title: Add repo-specific pinned Homebrew tool bundle
+    depends_on: [TASK-001]
+    components: [opencode-sandbox.repo.yaml]
+    stories: [US-002, US-004, US-006]
+    requirements: [DEV-005, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-018, DEV-019, DEV-020, DEV-021]
+    done: true
+    description: >-
+      Replace the repo VM's npm-based OpenCode install path with the same pinned
+      Homebrew bootstrap policy as the template, then install the repo-specific
+      OpenCode and Go bundle from the pinned Homebrew snapshot.
+
+  - id: TASK-003
+    title: Update docs for the apt-versus-Homebrew policy
+    depends_on: [TASK-001, TASK-002]
+    components: [README.md, docs/features/dev-env-setup, docs/architecture.adoc]
+    stories: [US-003, US-006]
+    requirements: [DEV-007, DEV-008, DEV-009, DEV-018, DEV-019, DEV-020, DEV-021, DEV-022]
+    done: true
+    description: >-
+      Refresh the feature artifacts, architecture document, and README so they
+      document the package policy, pinned Homebrew bootstrap inputs, and the
+      different repo-versus-template tool bundles.
+
+  - id: TASK-004
+    title: Re-validate the unchanged create and mount contract
+    depends_on: [TASK-001, TASK-002]
+    components: [devvm.yaml, internal/config, internal/create, internal/multipass]
+    stories: [US-001, US-002, US-005]
+    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-005, DEV-006, DEV-015, DEV-016, DEV-017]
+    done: true
+    description: >-
+      Confirm the existing config loading, create flow, and optional mount path
+      remain the launch contract while the checked-in cloud-init inputs change
+      underneath them. No CLI code changes are required for this transition.
