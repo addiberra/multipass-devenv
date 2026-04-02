@@ -164,11 +164,7 @@ write_files:
     content: |
       {
         "$schema": "https://opencode.ai/config.json",
-        "agents": {
-          "coder": {
-            "reasoningEffort": "high"
-          }
-        }
+        "share": "disabled"
       }
 
 runcmd:
