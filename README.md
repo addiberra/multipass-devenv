@@ -91,6 +91,8 @@ Or pass an explicit config path:
 go run ./cmd/devvm create --config ./devvm.yaml
 ```
 
+**Note:** If you do not want to use the CLI tool, see [docs/manual-setup.md](docs/manual-setup.md) for the equivalent manual Multipass commands.
+
 Enter the VM:
 
 ```bash
@@ -164,6 +166,8 @@ The `mount` section is optional. When present:
 4. It waits for `cloud-init status --wait`.
 5. If `mount` is configured, it sets `local.privileged-mounts` and runs `multipass mount`.
 6. It reports success.
+
+These steps can also be performed manually without the CLI. See [docs/manual-setup.md](docs/manual-setup.md) for the equivalent manual Multipass commands.
 
 ## Verification
 
