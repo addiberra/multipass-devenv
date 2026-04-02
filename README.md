@@ -1,13 +1,31 @@
 # Secure Multipass Dev Environment
 
-Minimal MVP for launching a Multipass VM from two checked-in inputs:
+This repo provides a small Go CLI plus reusable OpenCode-focused Multipass
+templates for agent workflows.
 
-- `devvm.yaml`
-- `opencode-sandbox.yaml`
+It also includes a repo-specific self-hosting setup so you can work on this
+repository inside a Multipass VM.
+
+## Artifact Roles
+
+- Root `devvm.yaml` plus `opencode-sandbox.repo.yaml`: this repository's own dev VM setup
+- `templates/devvm.template.yaml` plus `templates/opencode-sandbox.template.yaml`: reusable starter files for other repos
 
 The Go CLI reads `devvm.yaml`, passes the referenced cloud-init file to
 Multipass, waits for cloud-init to finish, and can optionally mount one
 explicit host repo into the VM.
+
+## Templates
+
+Start from the reusable templates when you want to adopt this workflow in a
+different repository:
+
+- Copy `templates/devvm.template.yaml`
+- Copy `templates/opencode-sandbox.template.yaml`
+- Adjust instance sizing, mount paths, workspace path, package list, and OpenCode settings
+
+The template config already points at the template cloud-init using a relative
+path, so the pair stays portable when copied together.
 
 ## Prerequisites
 
@@ -44,7 +62,7 @@ go build -o ./.bin/devvm ./cmd/devvm
 
 ## Quick Start
 
-Run the create command from the repository root:
+Run the repo-specific setup from the repository root:
 
 ```bash
 go run ./cmd/devvm create
@@ -75,7 +93,8 @@ Or run it directly from the host without opening an interactive shell first:
 multipass exec <vm-name> -- sudo -iu agent -- opencode
 ```
 
-The `agent` user's workspace is `/home/agent/workspace`.
+The repo-specific setup uses `/home/agent/workspace/multipass-devenv` as the
+agent workspace.
 
 If you configure a mount, the repo appears at the `mount.guest_path` you chose.
 
@@ -87,20 +106,23 @@ Example:
 
 ```yaml
 schema_version: "1.0"
-cloud_init: "./opencode-sandbox.yaml"
+cloud_init: "./opencode-sandbox.repo.yaml"
 
 mount:
-  host_path: "~/projects/my-repo"
-  guest_path: "/home/agent/workspace/my-repo"
+  host_path: "."
+  guest_path: "/home/agent/workspace/multipass-devenv"
   privileged: true
 
 instance:
-  name: "my-project-devvm"
+  name: "multipass-devenv-devvm"
   ubuntu_release: "24.04"
   cpus: 2
   memory: "4G"
   disk: "30G"
 ```
+
+The reusable starter config lives at `templates/devvm.template.yaml` and points
+to `templates/opencode-sandbox.template.yaml`.
 
 If `instance.name` is omitted, the CLI derives a valid Multipass name from the
 project directory.
@@ -140,7 +162,7 @@ systemctl is-enabled ssh || systemctl is-enabled sshd
 
 Expected results:
 
-- `whoami` prints the non-root guest user from `opencode-sandbox.yaml`
+- `whoami` prints the non-root guest user from the referenced cloud-init file
 - `sudo -n true` fails
 - UFW shows deny-by-default policies with outbound allows plus inbound SSH for Multipass access
 - SSH remains available so `multipass exec` and `multipass shell` work
@@ -148,7 +170,7 @@ Expected results:
 If you configured a mount, also verify:
 
 ```bash
-ls /home/agent/workspace/my-repo
+ls /home/agent/workspace/multipass-devenv
 ```
 
 ## Repository Layout
@@ -162,7 +184,10 @@ multipass-devenv/
 │   ├── config/
 │   ├── create/
 │   └── multipass/
-├── opencode-sandbox.yaml
+├── opencode-sandbox.repo.yaml
+├── templates/
+│   ├── devvm.template.yaml
+│   └── opencode-sandbox.template.yaml
 ├── schemas/
 │   └── devvm.schema.json
 ├── devvm.yaml

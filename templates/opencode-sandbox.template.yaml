@@ -1,13 +1,10 @@
 #cloud-config
 
 # =============================================================================
-# OpenCode Agent Sandbox — Multipass Cloud-Init
-# Sandboxed VM for running OpenCode as a coding agent with network isolation.
-#
-# SECURITY: Installs a pinned OpenCode CLI npm package version from the official
-# npm registry using Ubuntu's nodejs and npm packages.
-#
-# To update OpenCode, change OPENCODE_VERSION below.
+# OpenCode Agent Sandbox — Multipass Template
+# Starter cloud-init for OpenCode-based Multipass agent workflows.
+# Copy this file into your own repo and adjust the package list, WORKSPACE,
+# firewall policy, and OpenCode config to match your workflow.
 # =============================================================================
 
 users:
@@ -34,14 +31,12 @@ packages:
   - fd-find
 
 write_files:
-  # --- Pinned package version (edit this value to upgrade) ---
   - path: /etc/opencode-sandbox/version.env
     owner: root:root
     permissions: "0644"
     content: |
       OPENCODE_VERSION=1.3.10
 
-  # --- Install script: pinned npm package install ---
   - path: /usr/local/sbin/install-opencode.sh
     owner: root:root
     permissions: "0755"
@@ -65,7 +60,6 @@ write_files:
 
       echo "OpenCode CLI v${OPENCODE_VERSION} installed at $(command -v opencode)"
 
-  # --- Agent .bashrc: locked-down environment ---
   - path: /home/agent/.bashrc
     owner: agent:agent
     permissions: "0644"
@@ -80,7 +74,6 @@ write_files:
       export npm_config_cache=/home/agent/.npm
       cd "$WORKSPACE" 2>/dev/null || true
 
-  # --- Restricted DNS to prevent DNS-based exfiltration ---
   - path: /etc/systemd/resolved.conf.d/restricted-dns.conf
     owner: root:root
     permissions: "0644"
@@ -90,16 +83,14 @@ write_files:
       DNSOverTLS=yes
       Domains=~.
 
-  # --- MOTD reminder that this is ephemeral ---
   - path: /etc/motd
     owner: root:root
     permissions: "0644"
     content: |
       *** EPHEMERAL OPENCODE AGENT SANDBOX ***
-      Agent user: agent  |  Workspace: /home/agent/workspace
+      User: agent  |  Workspace: /home/agent/workspace
       Destroy after use:  multipass delete <n> --purge
 
-  # --- OpenCode config placeholder (agent user) ---
   - path: /home/agent/.config/opencode/opencode.json
     owner: agent:agent
     permissions: "0644"
@@ -115,11 +106,8 @@ write_files:
       }
 
 runcmd:
-  # ── Install OpenCode CLI from npm ──
   - mkdir -p /etc/opencode-sandbox
   - /usr/local/sbin/install-opencode.sh
-
-  # ── Create agent workspace ──
   - mkdir -p /home/agent/workspace
   - mkdir -p /home/agent/.config/opencode
   - mkdir -p /home/agent/.cache
@@ -130,46 +118,25 @@ runcmd:
   - chown -R agent:agent /home/agent/.cache
   - chown -R agent:agent /home/agent/.npm
   - chown -R agent:agent /home/agent/.local
-
-  # ── Lock agent home directory ──
   - chown root:agent /home/agent
   - chmod 750 /home/agent
   - chattr +i /home/agent/.bashrc
   - chattr +i /home/agent/.profile 2>/dev/null || true
   - chattr +i /home/agent/.bash_logout 2>/dev/null || true
-
-  # ── Egress firewall: deny-by-default ──
   - ufw default deny outgoing
   - ufw default deny incoming
-
-  # Multipass uses guest SSH for exec/shell/readiness operations
   - ufw allow in 22/tcp
-
-  # DNS — only to Cloudflare resolvers
   - ufw allow out to 1.1.1.1 port 53 proto udp
   - ufw allow out to 1.0.0.1 port 53 proto udp
   - ufw allow out to 1.1.1.1 port 853 proto tcp
   - ufw allow out to 1.0.0.1 port 853 proto tcp
-
-  # Block access to RFC1918 networks even on otherwise allowed ports
   - ufw deny out to 10.0.0.0/8
   - ufw deny out to 172.16.0.0/12
   - ufw deny out to 192.168.0.0/16
-
-  # HTTPS — required for LLM API calls
   - ufw allow out to any port 443 proto tcp
-
-  # HTTP — needed for some package repos
   - ufw allow out to any port 80 proto tcp
-
-  # Loopback — required for local dev servers / LSP
   - ufw allow out on lo
   - ufw allow in on lo
-
   - ufw --force enable
-
-  # ── Restart resolved with restricted DNS ──
   - systemctl restart systemd-resolved
-
-  # ── Log completion ──
-  - echo "OpenCode sandbox provisioned at $(date)" >> /var/log/cloud-init-output.log
+  - echo "Template sandbox provisioned at $(date)" >> /var/log/cloud-init-output.log

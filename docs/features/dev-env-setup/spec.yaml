@@ -3,7 +3,7 @@
 schema_version: "1.0.0"
 feature: dev-env-setup
 prefix: DEV
-version: "5.0.0"
+version: "6.0.0"
 last_updated: "2026-04-02"
 
 constraint_notes:
@@ -113,13 +113,50 @@ stories:
           instead of continuing.
 
   - id: US-003
+    title: Ship Reusable OpenCode Multipass Templates
+    narrative:
+      as_a: developer
+      i_want: reusable starter config and cloud-init files in this repository
+      so_that: I can copy the workflow into another repo without reverse-engineering the self-hosting setup
+    requirements:
+      - id: DEV-007
+        text: >-
+          The system shall include a reusable starter `devvm` config and a
+          reusable starter cloud-init file under `templates/`.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect the repository and confirm `templates/devvm.template.yaml` and
+          `templates/opencode-sandbox.template.yaml` both exist.
+
+      - id: DEV-008
+        text: >-
+          The reusable starter `devvm` config shall reference the reusable
+          starter cloud-init file using a relative path that keeps the pair
+          portable when copied together.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect `templates/devvm.template.yaml` and confirm its `cloud_init`
+          value points to `./opencode-sandbox.template.yaml`.
+
+      - id: DEV-009
+        text: >-
+          The reusable starter cloud-init file shall define a generic OpenCode
+          agent workflow rather than repository-specific mount or workspace
+          details.
+        ears_type: ubiquitous
+        verification: >-
+          Inspect `templates/opencode-sandbox.template.yaml` and confirm it uses
+          a generic workspace path and template-oriented comments instead of
+          repo-specific paths.
+
+  - id: US-004
     title: Preserve Secure Runtime Defaults
     narrative:
       as_a: developer
       i_want: the created environment to keep the same secure runtime posture
       so_that: the MVP remains simple without weakening the isolation model
     requirements:
-      - id: DEV-007
+      - id: DEV-010
         text: >-
           The system shall create the guest runtime as the non-root user defined
           by the checked-in cloud-init file.
@@ -128,7 +165,7 @@ stories:
           After the VM is created, enter it and run `whoami`. Confirm the
           active user matches the configured guest user and is not `root`.
 
-      - id: DEV-008
+      - id: DEV-011
         text: >-
           When guest setup completes, the system shall ensure the guest user
           cannot execute commands with administrative privileges.
@@ -137,7 +174,7 @@ stories:
           After the VM is created, enter it as the guest user and run
           `sudo -n true`. Confirm the command fails.
 
-      - id: DEV-009
+      - id: DEV-012
         text: >-
           The system shall configure the guest firewall to deny inbound and
           outbound traffic by default.
@@ -146,7 +183,7 @@ stories:
           After the VM is created, inspect the guest firewall configuration and
           confirm both inbound and outbound default policies are deny.
 
-      - id: DEV-010
+      - id: DEV-013
         text: >-
           The system shall allow outbound network connections only on the ports
           defined in the checked-in cloud-init file.
@@ -155,7 +192,7 @@ stories:
           Run the create command and confirm the guest firewall contains allow
           rules for only the outbound ports declared in the cloud-init file.
 
-      - id: DEV-011
+      - id: DEV-014
         text: >-
           The system shall allow only the guest SSH access required for
           Multipass-managed operations.
@@ -165,14 +202,14 @@ stories:
           while the VM remains accessible via `multipass exec` and
           `multipass shell`.
 
-  - id: US-004
+  - id: US-005
     title: Attach a Repo-Scoped Host Mount
     narrative:
       as_a: developer
       i_want: to optionally declare one host repo mount in `devvm.yaml`
       so_that: the VM can work directly in that repo without broader host access
     requirements:
-      - id: DEV-012
+      - id: DEV-015
         text: >-
           Where a `mount` section is present in `devvm.yaml`, the system shall
           validate the configured host path, guest path, and privileged mount
@@ -184,7 +221,7 @@ stories:
           host path and a non-absolute guest path and confirm the command fails
           before the mount workflow begins.
 
-      - id: DEV-013
+      - id: DEV-016
         text: >-
           Where a `mount` section is present in `devvm.yaml`, when guest setup
           completes, the system shall configure `local.privileged-mounts` to the
@@ -197,7 +234,7 @@ stories:
           mount succeeds. Repeat with `privileged: false` and confirm the
           setting changes accordingly.
 
-      - id: DEV-014
+      - id: DEV-017
         text: >-
           If the configured mount operation fails, then the system shall display
           the failure and stop without reporting the environment as ready.

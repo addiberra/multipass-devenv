@@ -1,6 +1,6 @@
 = Design: Dev Environment Setup
-:version: 5.0.0
-:source-spec-version: 5.0.0
+:version: 6.0.0
+:source-spec-version: 6.0.0
 :status: Current
 :last-updated: 2026-04-02
 :feature: dev-env-setup
@@ -8,16 +8,24 @@
 
 == Technical Context
 
-This feature keeps the simplified MVP launch path and extends it with one
-optional repo-scoped host mount. The repository still centers on checked-in
-launch inputs, but the create flow may now attach one explicit project
-directory after the VM is ready.
+This feature keeps the simplified MVP launch path and optional repo-scoped host
+mount, but now separates reusable starter artifacts from the repository's own
+self-hosting setup. The repository still centers on checked-in launch inputs,
+and the create flow may attach one explicit project directory after the VM is
+ready.
 
 The core inputs remain:
 
 * a checked-in `devvm.yaml` machine config
-* a checked-in cloud-init file
+* a checked-in cloud-init file referenced by that config
 * a thin Go `create` command
+
+This revision makes the artifact roles explicit:
+
+* root `devvm.yaml` plus `opencode-sandbox.repo.yaml` define this repository's
+  own development VM
+* `templates/devvm.template.yaml` plus
+  `templates/opencode-sandbox.template.yaml` provide the reusable starter pair
 
 The prior design removed all host mounts. This revision restores a narrower
 workflow: one optional repo-scoped `multipass mount`, controlled explicitly by
@@ -64,6 +72,7 @@ flowchart LR
         CFG[devvm.yaml]
         CLI[devvm create]
         CI[cloud-init file]
+        TPL[templates/]
     end
 
     subgraph MP["Multipass"]
@@ -80,6 +89,7 @@ flowchart LR
 
     CFG --> CLI
     CI --> CLI
+    TPL --> CLI
     CLI --> LAUNCH
     LAUNCH --> GUEST
     GUEST --> BOOT
@@ -114,8 +124,10 @@ sequenceDiagram
 
 ==== `devvm.yaml`
 
-`devvm.yaml` is the only required project configuration file. It defines the
-values needed to launch a VM and, optionally, one repo-scoped mount:
+`devvm.yaml` is the runnable project configuration file. In this repository it
+is the self-hosting config, but the same schema also backs the reusable starter
+file in `templates/devvm.template.yaml`. It defines the values needed to launch
+a VM and, optionally, one repo-scoped mount:
 
 * instance name, or omission to trigger name derivation
 * CPU, memory, disk, and Ubuntu release
@@ -168,6 +180,14 @@ runtime posture required by the spec:
 The CLI treats this file as an opaque launch input. The CLI validates that the
 path exists and passes it to Multipass unchanged.
 
+For this split, the repository now ships two cloud-init roles:
+
+* `opencode-sandbox.repo.yaml` for working on `multipass-devenv` itself
+* `templates/opencode-sandbox.template.yaml` as the reusable starter baseline
+
+The template file stays generic, while the repo-specific file may set a repo-
+specific workspace path and onboarding text.
+
 ==== Optional Repo Mount
 
 When `devvm.yaml` includes a `mount` section, the create flow performs one
@@ -219,23 +239,31 @@ Requirements::
 * DEV-005: The create flow launches a fresh VM from the configured Ubuntu release and cloud-init file.
 * DEV-006: Missing cloud-init input or launch failure is reported as a create failure.
 
-=== US-003: Preserve Secure Runtime Defaults
+=== US-003: Ship Reusable OpenCode Multipass Templates
+
+Components:: `templates/devvm.template.yaml`, `templates/opencode-sandbox.template.yaml`, `README.md`
+Requirements::
+* DEV-007: The repository includes a reusable starter `devvm` config and cloud-init file under `templates/`.
+* DEV-008: The starter config references the starter cloud-init file with a portable relative path.
+* DEV-009: The starter cloud-init stays generic rather than embedding repo-specific workspace or mount details.
+
+=== US-004: Preserve Secure Runtime Defaults
 
 Components:: checked-in cloud-init file, `internal/create`, `internal/multipass`
 Requirements::
-* DEV-007: The checked-in cloud-init file creates a non-root guest runtime.
-* DEV-008: The checked-in cloud-init file leaves the guest user without administrative privileges.
-* DEV-009: The checked-in cloud-init file sets deny-by-default firewall policies.
-* DEV-010: The checked-in cloud-init file defines the allowed outbound ports.
-* DEV-011: The checked-in cloud-init file allows only the SSH access Multipass requires while keeping broader guest exposure denied by default.
+* DEV-010: The checked-in cloud-init file creates a non-root guest runtime.
+* DEV-011: The checked-in cloud-init file leaves the guest user without administrative privileges.
+* DEV-012: The checked-in cloud-init file sets deny-by-default firewall policies.
+* DEV-013: The checked-in cloud-init file defines the allowed outbound ports.
+* DEV-014: The checked-in cloud-init file allows only the SSH access Multipass requires while keeping broader guest exposure denied by default.
 
-=== US-004: Attach a Repo-Scoped Host Mount
+=== US-005: Attach a Repo-Scoped Host Mount
 
 Components:: `devvm.yaml`, `schemas/devvm.schema.json`, `internal/config`, `internal/create`, `internal/multipass`
 Requirements::
-* DEV-012: The config contract optionally declares one mount and the loader validates the host path, guest path, and privileged flag before mount execution.
-* DEV-013: After guest readiness, the create flow sets `local.privileged-mounts` and mounts the configured host directory into the configured guest path.
-* DEV-014: Mount-setting or mount-command failures surface as create failures and do not report success.
+* DEV-015: The config contract optionally declares one mount and the loader validates the host path, guest path, and privileged flag before mount execution.
+* DEV-016: After guest readiness, the create flow sets `local.privileged-mounts` and mounts the configured host directory into the configured guest path.
+* DEV-017: Mount-setting or mount-command failures surface as create failures and do not report success.
 
 == File Structure
 
@@ -249,6 +277,9 @@ multipass-devenv/
 │   ├── config/
 │   ├── create/
 │   └── multipass/
-├── opencode-sandbox.yaml
+├── opencode-sandbox.repo.yaml
+├── templates/
+│   ├── devvm.template.yaml
+│   └── opencode-sandbox.template.yaml
 └── devvm.yaml
 ----

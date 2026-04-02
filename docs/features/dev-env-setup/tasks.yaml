@@ -2,24 +2,24 @@
 
 schema_version: "3.0.0"
 feature: dev-env-setup
-version: "6.0.0"
+version: "7.0.0"
 status: Implemented
-source_design_version: "5.0.0"
-source_spec_version: "5.0.0"
+source_design_version: "6.0.0"
+source_spec_version: "6.0.0"
 last_updated: "2026-04-02"
 
 overview: >-
-  Extend the MVP launch flow with one optional repo-scoped host mount. The work
-  is organized into config and schema updates, create-flow and Multipass mount
-  support, documentation updates, and final validation.
+  Separate the repository into reusable `templates/` artifacts plus a
+  repo-specific self-hosting config and cloud-init pair, while preserving the
+  existing create flow and optional repo-scoped mount behavior.
 
 tasks:
   - id: TASK-001
     title: Extend the machine config contract for an optional mount
     depends_on: []
     components: [devvm.yaml, schemas/devvm.schema.json, internal/config]
-    stories: [US-001, US-004]
-    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-012]
+    stories: [US-001, US-005]
+    requirements: [DEV-001, DEV-002, DEV-003, DEV-004, DEV-015]
     done: true
     description: >-
       Extend `devvm.yaml`, its schema, and the Go config loader with one
@@ -31,8 +31,8 @@ tasks:
     title: Add privileged mount and repo mount steps to the create flow
     depends_on: [TASK-001]
     components: [cmd/devvm, internal/create, internal/multipass]
-    stories: [US-001, US-002, US-004]
-    requirements: [DEV-001, DEV-005, DEV-006, DEV-013, DEV-014]
+    stories: [US-001, US-002, US-005]
+    requirements: [DEV-001, DEV-005, DEV-006, DEV-016, DEV-017]
     done: true
     description: >-
       Keep the existing launch path, then, when a mount is configured, set
@@ -40,24 +40,25 @@ tasks:
       create errors instead of success.
 
   - id: TASK-003
-    title: Update documentation for the optional mount workflow
+    title: Split checked-in artifacts into template and repo-specific roles
     depends_on: [TASK-002]
-    components: [README.md, docs/features/dev-env-setup, docs/architecture.adoc]
-    stories: [US-002, US-003, US-004]
-    requirements: [DEV-005, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014]
+    components: [devvm.yaml, opencode-sandbox.repo.yaml, templates/devvm.template.yaml, templates/opencode-sandbox.template.yaml]
+    stories: [US-002, US-003, US-004, US-005]
+    requirements: [DEV-005, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-015, DEV-016, DEV-017]
+    done: true
+    description: >-
+      Keep the existing path-based create contract, but separate the checked-in
+      files into reusable starter artifacts under `templates/` and a root
+      self-hosting pair for this repository.
+
+  - id: TASK-004
+    title: Update docs and validate the split workflow
+    depends_on: [TASK-003]
+    components: [README.md, docs/features/dev-env-setup, docs/architecture.adoc, cmd/devvm, internal/config, internal/create, internal/multipass]
+    stories: [US-001, US-002, US-003, US-004, US-005]
+    requirements: [DEV-002, DEV-003, DEV-004, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014, DEV-015, DEV-016, DEV-017]
     done: true
     description: >-
       Update the feature docs, architecture document, and README so they
-      describe the optional repo mount workflow and its scoped security model.
-
-  - id: TASK-004
-    title: Validate the mounted launch workflow
-    depends_on: [TASK-003]
-    components: [cmd/devvm, internal/config, internal/create, internal/multipass, docs/features/dev-env-setup]
-    stories: [US-001, US-002, US-003, US-004]
-    requirements: [DEV-002, DEV-003, DEV-004, DEV-006, DEV-007, DEV-008, DEV-009, DEV-010, DEV-011, DEV-012, DEV-013, DEV-014]
-    done: true
-    description: >-
-      Run task and spec validators plus Go tests and build verification for the
-      updated CLI. Confirm the documented workflow matches the implemented mount
-      behavior.
+      describe the template versus repo-specific split, then run Go tests and
+      build verification for the unchanged CLI behavior.

@@ -1,5 +1,5 @@
 = System Architecture
-:version: 5.0.0
+:version: 6.0.0
 :last-updated: 2026-04-02
 :toc:
 
@@ -9,16 +9,18 @@
 |===
 | Feature | Design Version
 
-| dev-env-setup | 5.0.0
+| dev-env-setup | 6.0.0
 |===
 
 == Overview
 
 This project is a minimal Go CLI for launching an isolated Ubuntu VM with
-Multipass from two checked-in inputs: `devvm.yaml` and `opencode-sandbox.yaml`.
-The VM boundary remains the primary security control. The host-side tool
-validates the machine config, launches the VM, waits for cloud-init to finish,
-and may then attach one explicit repo-scoped host mount.
+Multipass from a checked-in machine config and referenced cloud-init file. The
+repository ships both reusable template artifacts under `templates/` and a
+repo-specific root setup for self-hosting. The VM boundary remains the primary
+security control. The host-side tool validates the machine config, launches the
+VM, waits for cloud-init to finish, and may then attach one explicit repo-
+scoped host mount.
 
 == System Context
 
@@ -48,8 +50,9 @@ C4Container
 
   System_Boundary(host, "Host Machine") {
     Container(cli, "devvm create", "Go", "Validates config, launches the VM, and optionally mounts one host repo")
-    Container(config, "devvm.yaml", "File", "Project-local machine configuration")
-    Container(cloudinit, "opencode-sandbox.yaml", "File", "Checked-in guest provisioning file")
+    Container(config, "devvm.yaml", "File", "Repo-local machine configuration for self-hosting")
+    Container(templates, "templates/", "Files", "Reusable starter config and cloud-init artifacts")
+    Container(cloudinit, "opencode-sandbox.repo.yaml", "File", "Repo-specific guest provisioning file")
   }
 
   System_Boundary(vm, "Multipass VM") {
@@ -132,7 +135,7 @@ C4Deployment
 
 | Guest Provisioning
 | cloud-init
-| Uses one checked-in provisioning file applied during first boot
+| Uses a checked-in provisioning file applied during first boot, with reusable templates shipped alongside the repo-specific setup
 
 | Network Firewall
 | UFW
@@ -149,9 +152,11 @@ not expose broader host paths.
 
 === Provisioning Boundary
 
-Provisioning is defined by the checked-in `opencode-sandbox.yaml` cloud-init
-file plus an optional post-boot repo mount declared in `devvm.yaml`. The CLI
-does not inject secrets or perform general file transfer.
+Provisioning is defined by the cloud-init file referenced from `devvm.yaml`
+plus an optional post-boot repo mount declared in that same config. The root
+files are this repository's self-hosting setup, while `templates/` contains the
+copy-and-adapt starter pair for other repos. The CLI does not inject secrets or
+perform general file transfer.
 
 === Access Model
 

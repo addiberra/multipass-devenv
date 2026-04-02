@@ -1,15 +1,15 @@
 # yaml-language-server: $schema=./schemas/devvm.schema.json
 
 schema_version: "1.0"
-cloud_init: "./opencode-sandbox.yaml"
+cloud_init: "./opencode-sandbox.repo.yaml"
 
 mount:
-  host_path: "~/projects/my-repo"
-  guest_path: "/home/agent/workspace/my-repo"
+  host_path: "."
+  guest_path: "/home/agent/workspace/multipass-devenv"
   privileged: true
 
 instance:
-  name: "my-project-devvm"
+  name: "multipass-devenv-devvm"
   ubuntu_release: "24.04"
   cpus: 2
   memory: "4G"
